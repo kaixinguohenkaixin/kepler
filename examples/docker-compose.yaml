@@ -1,0 +1,31 @@
+
+version: '2'
+
+services:
+  kepler0.example.com:
+    container_name: kepler0.example.com
+    image: kepler
+    environment:
+      - CONFIG_CONSORTIUM_MSPID=Org1MSP
+      - CONFIG_PUBLIC_CONTRACT_ADDRESS=0xceaad4b5eddabc106c5d615db940930f3ddb6a46
+      - CONFIG_PUBLIC_KEYPASS=password
+    working_dir: /opt/gopath/src/github.com/vntchain/kepler
+    command: kepler node start
+    volumes:
+        - ./data/org1/config/:/opt/gopath/src/github.com/vntchain/kepler/config
+
+  kepler1.example.com:
+    container_name: kepler1.example.com
+    image: kepler
+    environment:
+      - CONFIG_CONSORTIUM_MSPID=Org2MSP
+      - CONFIG_PUBLIC_CONTRACT_ADDRESS=0xceaad4b5eddabc106c5d615db940930f3ddb6a46
+      - CONFIG_PUBLIC_KEYPASS=123456
+      - CONFIG_CONSORTIUM_PEERS={ "peer1" :{ "address":"192.168.9.25:8051","sn":"","eventAddress":"192.168.9.25:8053","tls":{"enabled":false,"clientAuthRequired":false,"clientKeyFile":"client.key","clientCertFile":"client.cer","rootcertFile":"root.cer"}} }
+    working_dir: /opt/gopath/src/github.com/vntchain/kepler
+    command: kepler node start
+    volumes:
+        # - ./data/org2:/opt/gopath/src/github.com/vntchain/kepler/config/consortium
+        - ./data/org2/config/:/opt/gopath/src/github.com/vntchain/kepler/config
+
+# CORE_PEER_LOCALMSPID="Org2MSP" CORE_PEER_MSPCONFIGPATH=/opt/gopath/src/github.com/hyperledger/fabric/peer/crypto/peerOrganizations/org2.example.com/users/Admin@org2.example.com/msp

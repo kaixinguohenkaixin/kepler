@@ -1,0 +1,14 @@
+{
+  "name": "wasm_test",
+  "version": "1.0.0",
+  "description": "vnt.js test",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "vnt": "git+http://github.com/vntchain/vnt.js.git#develop"
+  }
+}

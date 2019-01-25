@@ -1,0 +1,5 @@
+# 1.运行cp_publickey.sh脚本替换key
+# 2.进入config.yaml文件修改contract.address
+# 3.进入example/data/org1/config/config.yaml文件修改contract.address
+# 4.进入example/data/org2/config/config.yaml文件修改contract.address
+# 5.进入example/docker-compose.yaml文件修改CONFIG_PUBLIC_CONTRACT_ADDRESS
