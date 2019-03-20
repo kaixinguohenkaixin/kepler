@@ -2,59 +2,89 @@ package txmanager
 
 import (
 	"fmt"
-	"github.com/spf13/viper"
-	"strings"
-	"time"
-
-	"github.com/vntchain/kepler/core/public/sdk"
-	sdkutils "github.com/vntchain/kepler/core/public/sdk/common"
-
-	pubevent "github.com/vntchain/kepler/event/public"
-	"math/big"
-
 	"github.com/vntchain/go-vnt/accounts"
 	"github.com/vntchain/go-vnt/accounts/keystore"
-	ethcom "github.com/vntchain/go-vnt/common"
+	pubcom "github.com/vntchain/go-vnt/common"
 	"github.com/vntchain/go-vnt/core/types"
+	"github.com/vntchain/kepler/core/public/sdk"
+	sdkutils "github.com/vntchain/kepler/core/public/sdk/common"
+	pubevent "github.com/vntchain/kepler/event/public"
+	"math/big"
+	"strings"
+	"time"
+)
+
+const (
+	SyncInterval    = 5 * time.Second
+	RetraceInterval = 3 * time.Second
+	TxAmount        = 0
+	TxPrice         = 21
+	TxGasLimit      = 1000000
 )
 
 type NodeManager struct {
-	httpUrl  string
-	wsPath   string
-	keyDir   string
 	nodeName string
 	ethSDK   *sdk.EthSDK
 }
 
-func (nm *NodeManager) Init(key string, config interface{}, ks *keystore.KeyStore) (err error) {
-
-	nm.nodeName = key
-
+func newNodeManager(nodeName string, config interface{}, ks *keystore.KeyStore) (nm *NodeManager, err error) {
 	nodeConfig := config.(map[interface{}]interface{})
+	httpUrl, ok := nodeConfig["httpUrl"].(string)
+	if !ok {
+		err = fmt.Errorf("[public nodeManager] resolve node httpUrl [%#v] failed", nodeConfig["httpUrl"])
+		logger.Error(err)
+		return nil, err
+	}
+	wsPath, ok := nodeConfig["wsPath"].(string)
+	if !ok {
+		err = fmt.Errorf("[public nodeManager] resolve node wsPath [%#v] failed", nodeConfig["wsPath"])
+		logger.Error(err)
+		return nil, err
+	}
+	logger.Debugf("[public nodeManager] new node manager httpUrl: [%s], wsPath: [%s] ", httpUrl, wsPath)
+	sdkConfig := sdk.EthConfig{HttpUrl: httpUrl, WsPath: wsPath}
+	ethSDK, err := sdk.NewEthSDK(sdkConfig, ks)
+	if err != nil {
+		err = fmt.Errorf("[public nodeManager] new public SDK failed: %s", err)
+		logger.Error(err)
+		return nil, err
+	}
 
-	nm.httpUrl = nodeConfig["httpUrl"].(string)
-	nm.wsPath = nodeConfig["wsPath"].(string)
-
-	logger.Debugf("init node manager httpUrl:%s wsPath:%s ", nm.httpUrl, nm.wsPath)
-
-	sdkConfig := sdk.EthConfig{HttpUrl: nm.httpUrl, WsPath: nm.wsPath}
-
-	nm.ethSDK, err = sdk.NewEthSDK(sdkConfig, ks)
-
-	return err
+	nm = &NodeManager{
+		nodeName: nodeName,
+		ethSDK:   ethSDK,
+	}
+	return nm, nil
 }
 
-func (nm *NodeManager) ListenWsEvent(contractManager *ContractManager, userToCChan chan *pubevent.LogUserToC) {
-	logger.Debugf("nodeManager start listening ws event")
+func (nm *NodeManager) GetEthSDK() (*sdk.EthSDK, error) {
+	if nm.ethSDK == nil {
+		err := fmt.Errorf("[public nodeManager] sdk is nil")
+		logger.Error(err)
+		return nil, err
+	}
+
+	return nm.ethSDK, nil
+}
+
+func (nm *NodeManager) GetTransactionReceipt(txHash string) (map[string]interface{}, error) {
+	return nm.ethSDK.GetTransactionReceipt(pubcom.HexToHash(txHash))
+}
+
+func (nm *NodeManager) ListenWsEvent(EventRollback string, EventUserToC string, EventCToUser string, logUserToC string, contractManager *ContractManager, userToCChan chan *pubevent.LogUserToC) {
+	logger.Debugf("[public nodeManager] start listening event")
+
 	contractAddress := contractManager.GetContractAddress()
 	log := make(chan types.Log, 1)
-
-	nm.ethSDK.RetraceLog(sdkutils.RetraceConf{
+	err := nm.ethSDK.RetraceLog(sdkutils.RetraceConf{
 		HttpClient:      nm.ethSDK.HttpClient,
 		ContractAddress: contractAddress,
-		SyncInterval:    5 * time.Second,
-		RetraceInterval: 3 * time.Second,
+		SyncInterval:    SyncInterval,
+		RetraceInterval: RetraceInterval,
 	}, log)
+	if err != nil {
+		logger.Panicf("[public nodeManager] retrace log failed: %s", err)
+	}
 
 	for {
 		l := <-log
@@ -66,82 +96,74 @@ func (nm *NodeManager) ListenWsEvent(contractManager *ContractManager, userToCCh
 		removed := l.Removed
 		blockHash := l.BlockHash
 
-		if len(topics) > 0 {
-
-			eventname := topics[1].Hex()
-			logger.Debugf("read an event: name is %s", eventname)
-
-			EventRollback := viper.GetString("public.EventRollback")
-			EventUserToC := viper.GetString("public.EventUserToC")
-			EventCToUser := viper.GetString("public.EventCToUser")
-
-			if strings.Contains(eventname, EventRollback) {
-				//回滚事件成功，做相应的处理
-				logger.Debugf("rollback rollback")
-			} else if strings.Contains(eventname, EventUserToC) {
-				logger.Debugf("userToC event")
-				userToC, err := contractManager.ReadUserToCEvent(data, topics, blockNumber, blockHash, txHash, txIndex, removed)
-				if err != nil {
-					logger.Errorf("ReadUserToCEvent err:%v", err)
-					break
-				}
-				logger.Debugf("ReadUserToCEvent to userToC is %v", userToC)
-				userToCChan <- userToC
-			} else if strings.Contains(eventname, EventCToUser) {
-				//CToUser，做相应的处理
-				logger.Debugf("cToUser event")
-			}
-
+		if len(topics) == 0 {
+			continue
 		}
 
+		eventName := topics[1].Hex()
+		logger.Debugf("[public nodeManager] read event [%s]", eventName)
+
+		if strings.Contains(eventName, EventUserToC) {
+			userToC, err := contractManager.ReadUserToCEvent(logUserToC, data, topics, blockNumber, blockHash, txHash, txIndex, removed)
+			if err != nil {
+				logger.Errorf("[public nodeManager] ReadUserToCEvent failed: %s", err)
+				continue
+			}
+			logger.Debugf("[public nodeManager] UserToC Event: %#v", userToC)
+			userToCChan <- userToC
+		} else if strings.Contains(eventName, EventRollback) {
+			continue
+		} else if strings.Contains(eventName, EventCToUser) {
+			continue
+		}
 	}
 }
 
-func (nm *NodeManager) GetEthSDK() (*sdk.EthSDK, error) {
-	if nm.ethSDK == nil {
-		return nil, fmt.Errorf("public chain nodeManager sdk is nil")
-	}
-
-	return nm.ethSDK, nil
-}
-
-func (nm *NodeManager) SendRawTransaction(chainId int, contractAdd ethcom.Address, data []byte, isWait bool) (string, error) {
+func (nm *NodeManager) SendRawTransaction(passwd string, chainId int, contractAdd pubcom.Address, data []byte, isWait bool) (txid string, err error) {
 	var nonce uint64
-	var acc accounts.Account
+	var acct accounts.Account
 
 	if len(nm.ethSDK.Keystore.Accounts()) == 0 {
-		acc, _ = nm.ethSDK.Keystore.NewAccount("123456")
+		acct, err = nm.ethSDK.Keystore.NewAccount(passwd)
+		if err != nil {
+			err = fmt.Errorf("[public nodeManager] cannot find account, new account failed: %s", err)
+			logger.Error(err)
+			return
+		}
 	} else {
-		acc = nm.ethSDK.Keystore.Accounts()[0]
+		acct = nm.ethSDK.Keystore.Accounts()[0]
 	}
-	var err error
 
-	if nonce, err = nm.ethSDK.GetNonce(acc.Address); err != nil {
-		return "", fmt.Errorf("Failed to getNonce of %s with %s", acc.Address.Hex(), err.Error())
+	if nonce, err = nm.ethSDK.GetNonce(acct.Address); err != nil {
+		err = fmt.Errorf("[public nodeManager] getNonce of [%s] failed: %s", acct.Address.Hex(), err)
+		logger.Error(err)
+		return
 	}
+
 	chainIdBig := big.NewInt(int64(chainId))
-	amount := big.NewInt(0)
-	price := big.NewInt(21)
-	//gasLimit, _ := nm.ethSDK.EstimateGas(acc.Address, contractAdd, data, amount, price)
-	gasLimit := uint64(1000000)
-	if err = nm.ethSDK.Keystore.Unlock(acc, "123456"); err != nil {
-		return "", fmt.Errorf("Failed to unlock acc with %s", err.Error())
-	}
-	accBalance, _ := nm.ethSDK.GetBalanceByHex(acc.Address.Hex())
-	logger.Errorf("[public SendRawTransaction] accBalance: %#v", accBalance)
-	signedData, err := nm.ethSDK.FormSignedTransaction(&acc, chainIdBig, nonce, contractAdd, amount, gasLimit, price, data)
-	if err != nil {
-		logger.Errorf("Failed to FormSignedData with %s", err.Error())
-		return "", err
-	}
-	sendRes, err := nm.ethSDK.SendRawTransaction(signedData, isWait)
-	if err != nil {
-		logger.Errorf("Failed to SendRawTransaction with %s\n", err.Error())
-		return "", err
-	}
-	return sendRes.Hex(), nil
-}
+	amount := big.NewInt(TxAmount)
+	price := big.NewInt(TxPrice)
+	// FIXME
+	// gasLimit, _ := nm.ethSDK.EstimateGas(acc.Address, contractAdd, data, amount, price)
+	gasLimit := uint64(TxGasLimit)
 
-func (nm *NodeManager) GetTransactionReceipt(txHashStr string) (map[string]interface{}, error) {
-	return nm.ethSDK.GetTransactionReceipt(ethcom.HexToHash(txHashStr))
+	if err = nm.ethSDK.Keystore.Unlock(acct, passwd); err != nil {
+		err = fmt.Errorf("[public nodeManager] unlock account [%s] failed: %s", acct.Address.Hex(), err)
+		logger.Error(err)
+		return
+	}
+	signedData, err := nm.ethSDK.FormSignedTransaction(&acct, chainIdBig, nonce, contractAdd, amount, gasLimit, price, data)
+	if err != nil {
+		err = fmt.Errorf("[public nodeManager] form signed transaction failed: %s", err)
+		logger.Error(err)
+		return
+	}
+	result, err := nm.ethSDK.SendRawTransaction(signedData, isWait)
+	if err != nil {
+		err = fmt.Errorf("[public nodeManager] send raw transaction failed: %s", err)
+		logger.Error(err)
+		return
+	}
+	txid = result.Hex()
+	return
 }

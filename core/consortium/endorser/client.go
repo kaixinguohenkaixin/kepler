@@ -9,11 +9,11 @@ import (
 	"io/ioutil"
 	"time"
 
+	"github.com/op/go-logging"
+	"github.com/pkg/errors"
 	"github.com/vntchain/kepler/event/consortium/consumer"
 	ab "github.com/vntchain/kepler/protos/orderer"
 	pb "github.com/vntchain/kepler/protos/peer"
-	"github.com/op/go-logging"
-	"github.com/pkg/errors"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"

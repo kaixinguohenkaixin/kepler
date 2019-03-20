@@ -2,10 +2,10 @@ package main
 
 import (
 	"encoding/json"
-	"github.com/vntchain/kepler/node/node"
 	"github.com/op/go-logging"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"github.com/vntchain/kepler/node/node"
 	"os"
 	"strings"
 )

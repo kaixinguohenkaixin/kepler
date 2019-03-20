@@ -10,9 +10,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/golang/protobuf/proto"
 	"github.com/vntchain/kepler/protos/common"
 	"github.com/vntchain/kepler/utils"
-	"github.com/golang/protobuf/proto"
 )
 
 const RETRACE_FILE_NAME = "./retrace.json"
