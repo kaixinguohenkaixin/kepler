@@ -21,6 +21,6 @@ matrix:
       os: osx
       go: 1.11.x
       script:
-        - make all
+        - make kepler
         - go test ./core/public/sdk/common
         - go test ./core/public/txmanager
