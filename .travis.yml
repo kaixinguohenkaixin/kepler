@@ -1,5 +1,9 @@
 language: go
 go_import_path: github.com/vntchain/kepler
+
+services:
+  - docker
+
 sudo: false
 notifications: always
 matrix:
