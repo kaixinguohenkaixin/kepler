@@ -1,0 +1,22 @@
+language: go
+go_import_path: github.com/vntchain/kepler
+sudo: false
+notifications: always
+matrix:
+  include:
+    - stage: Build & Test on linux go1.10.x
+      os: linux
+      dist: trusty
+      go: 1.10.x
+      script:
+        - make all
+        - go test ./core/public/sdk/common
+        - go test ./core/public/txmanager
+
+    - stage: Build & Test on OSX
+      os: osx
+      go: 1.11.x
+      script:
+        - make all
+        - go test ./core/public/sdk/common
+        - go test ./core/public/txmanager
