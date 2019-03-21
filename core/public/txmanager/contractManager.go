@@ -1,10 +1,10 @@
 package txmanager
 
 import (
-	pubevent "github.com/vntchain/kepler/event/public"
-	"github.com/spf13/viper"
+	"fmt"
 	"github.com/vntchain/go-vnt/accounts/abi"
-	ethcom "github.com/vntchain/go-vnt/common"
+	pubcom "github.com/vntchain/go-vnt/common"
+	pubevent "github.com/vntchain/kepler/event/public"
 	"io/ioutil"
 	"math/big"
 	"strings"
@@ -12,45 +12,54 @@ import (
 
 type ContractManager struct {
 	abiInstance     abi.ABI
-	contractAddress ethcom.Address
+	contractAddress pubcom.Address
 	abiPath         string
 }
 
-func (cm *ContractManager) Init() error {
-	cm.abiPath = viper.GetString("public.contract.abi")
-
-	abiJson, err := ioutil.ReadFile(cm.abiPath)
+func newContractManager(abiPath string, contractAddrStr string) (*ContractManager, error) {
+	abiJson, err := ioutil.ReadFile(abiPath)
 	if err != nil {
-		return err
+		err = fmt.Errorf("[public contractManager] read abi file failed: %s", err)
+		logger.Error(err)
+		return nil, err
+	}
+	abiInstance, err := abi.JSON(strings.NewReader(string(abiJson)))
+	if err != nil {
+		err = fmt.Errorf("[public contractManager] create abi json failed: %s", err)
+		logger.Error(err)
+		return nil, err
 	}
 
-	cm.abiInstance, err = abi.JSON(strings.NewReader(string(abiJson)))
-	if err != nil {
-		return err
-	}
+	logger.Debugf("[public contractManager] contract address: %s", contractAddrStr)
+	contractAddr := pubcom.HexToAddress(contractAddrStr)
 
-	contractAddressStr := viper.GetString("public.contract.address")
-	logger.Errorf("[public contractManager] contract address: %#v", contractAddressStr)
-	cm.contractAddress = ethcom.HexToAddress(contractAddressStr)
-	return nil
+	cm := ContractManager{
+		abiInstance:     abiInstance,
+		contractAddress: contractAddr,
+		abiPath:         abiPath,
+	}
+	return &cm, nil
 }
 
-func (cm *ContractManager) GetContractAddress() ethcom.Address {
+func (cm *ContractManager) GetContractAddress() pubcom.Address {
 	return cm.contractAddress
 }
 
-func (cm *ContractManager) ReadUserToCEvent(data []byte, topics []ethcom.Hash, blockNumber uint64, blockHash ethcom.Hash, txHash ethcom.Hash, txIndex uint, removed bool) (*pubevent.LogUserToC, error) {
-	// var userToCData pubevent.LogUserToCData
+func (cm *ContractManager) GetABIPath() string {
+	return cm.abiPath
+}
 
+func (cm *ContractManager) ReadUserToCEvent(eventName string, data []byte, topics []pubcom.Hash, blockNumber uint64, blockHash pubcom.Hash, txHash pubcom.Hash, txIndex uint, removed bool) (*pubevent.LogUserToC, error) {
 	type LogUserToC struct {
 		Ac_address string
 		Txid       string
 	}
 	var eventUserToC LogUserToC
 
-	logUserToC := viper.GetString("public.LogUserToC")
-	err := cm.abiInstance.Unpack(&eventUserToC, logUserToC, data)
+	err := cm.abiInstance.Unpack(&eventUserToC, eventName, data)
 	if err != nil {
+		err = fmt.Errorf("[public contractManager] unpack LogUserToC event failed: %s", err)
+		logger.Error(err)
 		return nil, err
 	}
 
@@ -67,10 +76,6 @@ func (cm *ContractManager) ReadUserToCEvent(data []byte, topics []ethcom.Hash, b
 		TxIndex:     txIndex,
 		Removed:     removed,
 	}
-	logger.Debugf("ReadUserToCEvent userToC is %#v", userToC)
+	logger.Debugf("[public contractManager] read LogUserToC event: %#v", userToC)
 	return userToC, nil
-}
-
-func (cm *ContractManager) GetABIPath() string {
-	return cm.abiPath
 }

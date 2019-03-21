@@ -8,12 +8,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/vntchain/kepler/protos/peer"
-	ehpb "github.com/vntchain/kepler/protos/peer"
-	"github.com/vntchain/kepler/utils"
 	"github.com/golang/protobuf/ptypes/timestamp"
 	"github.com/op/go-logging"
 	"github.com/spf13/viper"
+	"github.com/vntchain/kepler/protos/peer"
+	ehpb "github.com/vntchain/kepler/protos/peer"
+	"github.com/vntchain/kepler/utils"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 )

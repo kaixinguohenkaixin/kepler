@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/op/go-logging"
 	"github.com/vntchain/go-vnt/common"
+	"github.com/vntchain/go-vnt/common/hexutil"
 	"github.com/vntchain/go-vnt/core/types"
 	"github.com/vntchain/go-vnt/rpc"
 	"io/ioutil"
@@ -14,9 +15,12 @@ import (
 	"time"
 )
 
-var logger = logging.MustGetLogger("core/public/sdk/common")
+var logger = logging.MustGetLogger("public_sdk_retracer")
 
-const RETRACE_FILE_NAME = "./log-retrace.json"
+const (
+	RetraceFileName = "./log-retrace.json"
+	FilePerm        = 0644
+)
 
 type RetraceConf struct {
 	HttpClient      *rpc.Client
@@ -26,135 +30,163 @@ type RetraceConf struct {
 }
 
 type retracer struct {
-	httpClient      *rpc.Client
-	syncStatus      map[string]uint64
-	syncMu          sync.Mutex
-	cache           chan *[]types.Log
-	contractAddress common.Address
-	syncInterval    time.Duration
-	retraceInterval time.Duration
+	RetraceConf
+	syncStatus map[string]uint64
+	syncLock   sync.Mutex
 }
 
-func InitRetracer(config RetraceConf) *retracer {
-	logger.Debugf("Init Retracer")
+func InitRetracer(config RetraceConf) (*retracer, error) {
 	var tracer retracer
-	tracer.httpClient = config.HttpClient
-	tracer.contractAddress = config.ContractAddress
-	tracer.syncInterval = config.SyncInterval
-	tracer.retraceInterval = config.RetraceInterval
+	tracer.RetraceConf = config
 	tracer.syncStatus = make(map[string]uint64)
 
-	tracer.cache = make(chan *[]types.Log, 32)
-	_, err := os.Stat(RETRACE_FILE_NAME)
+	_, err := os.Stat(RetraceFileName)
 	if os.IsNotExist(err) {
-		logger.Debugf(`Can't find serialization file "%s",init event checker for the first time!`, RETRACE_FILE_NAME)
-		ioutil.WriteFile(RETRACE_FILE_NAME, []byte("{}"), 0644)
+		logger.Infof("[public sdk retracer] Can't find retrace file [%s], init event checker for the first time", RetraceFileName)
+		err = ioutil.WriteFile(RetraceFileName, []byte("{}"), FilePerm)
+		if err != nil {
+			err = fmt.Errorf("[public sdk retracer] write retrace file [%s] failed: %s", RetraceFileName, err)
+			logger.Error(err)
+			return nil, err
+		}
 		tracer.syncStatus[config.ContractAddress.Hex()] = 0
 	} else {
-		serialization, err := ioutil.ReadFile(RETRACE_FILE_NAME)
+		serialization, err := ioutil.ReadFile(RetraceFileName)
 		if err != nil {
-			panic(fmt.Sprintf(`Initialize retrace history from "%s" error: %s`, RETRACE_FILE_NAME, err))
+			err = fmt.Errorf("[public sdk retracer] initialize retrace history from [%s] failed: %s", RetraceFileName, err)
+			logger.Error(err)
+			return nil, err
 		}
 		err = json.Unmarshal(serialization, &tracer.syncStatus)
 		if err != nil {
-			panic(fmt.Sprintf(`Unmarshal history handled block error: %s`, err))
+			err = fmt.Errorf("[public sdk retracer] unmarshal retrace history failed: %s", err)
+			logger.Error(err)
+			return nil, err
 		}
 	}
-	logger.Debugf("[public retracer] syncStatus: %#v", tracer.syncStatus)
-	return &tracer
+	logger.Debugf("[public sdk retracer] retrace sync status: %#v", tracer.syncStatus)
+	return &tracer, nil
 }
 
 func (rt *retracer) Process(log chan types.Log) {
 	for {
-		time.Sleep(rt.retraceInterval)
+		time.Sleep(rt.RetraceInterval)
 
-		height, _ := rt.getHeight()
-		logger.Debugf("[public getHeight]:%d", height)
+		height, err := rt.getHeight()
+		if err != nil {
+			logger.Errorf("[public sdk retracer] get height failed: %s", err)
+			continue
+		}
+		logger.Debugf("[public sdk retracer] block height: %d", height)
 		syncHeight := rt.getSyncHeight()
-		logger.Debugf("[public syncHeight]:%d", syncHeight)
-
+		logger.Debugf("[public sdk retracer] sync height: %d", syncHeight)
 		if height <= syncHeight {
 			continue
 		}
 
-		rt.cache <- rt.seekLogs(syncHeight+1, height+1)
-		rt.dispatcher(log)
-		rt.syncMu.Lock()
-		rt.syncStatus[rt.contractAddress.Hex()] = height
-		rt.syncMu.Unlock()
-		err := rt.syncToFile()
-
+		result, err := rt.seekLogs(syncHeight+1, height+1)
 		if err != nil {
-			logger.Critical("save status to file err:(%s)", err)
+			logger.Errorf("[public sdk retracer] seek logs failed: %s", err)
+			continue
 		}
 
-	}
+		for _, single := range result {
+			log <- single
+			logger.Debugf("[public sdk retracer] dispatch log: %#v", single)
+		}
 
+		rt.syncLock.Lock()
+		rt.syncStatus[rt.ContractAddress.Hex()] = height
+		rt.syncLock.Unlock()
+
+		err = rt.syncToFile()
+		if err != nil {
+			logger.Errorf("[public sdk retracer] save status to file [%s] failed: %s", RetraceFileName, err)
+		}
+	}
 }
 
-func (rt *retracer) SyncToFile() {
-	for {
-		time.Sleep(rt.syncInterval)
-		rt.syncToFile()
-		logger.Debug("Sync Data persisted successful!")
+func (rt *retracer) getHeight() (height uint64, err error) {
+	var result interface{}
+	err = rt.HttpClient.Call(&result, "core_blockNumber", "latest", true)
+	if err != nil {
+		err = fmt.Errorf("[public sdk retracer] get blocknumber failed: %s", err)
+		logger.Error(err)
+		return
 	}
+	height, err = hexutil.DecodeUint64(result.(string))
+	if err != nil {
+		err = fmt.Errorf("[public sdk retracer] decode blocknumber [%s] failed: %s", result.(string), err)
+		logger.Error(err)
+	}
+	return
+}
+
+func (rt *retracer) getSyncHeight() uint64 {
+	rt.syncLock.Lock()
+	defer rt.syncLock.Unlock()
+	return rt.syncStatus[rt.ContractAddress.Hex()]
+}
+
+func (rt *retracer) seekLogs(from uint64, to uint64) (result []types.Log, err error) {
+	fromBlockHex := hexutil.EncodeUint64(from)
+	toBlockHex := hexutil.EncodeUint64(to)
+	arg := map[string]interface{}{
+		"fromBlock": fromBlockHex,
+		"toBlock":   toBlockHex,
+		"address":   []common.Address{rt.ContractAddress},
+		"topics":    [][]common.Hash{},
+	}
+
+	result = make([]types.Log, 0)
+	err = rt.HttpClient.Call(&result, "core_getLogs", arg)
+	if err != nil {
+		err = fmt.Errorf("[public sdk retracer] get logs failed: %s", err)
+		logger.Error(err)
+		return
+	}
+	logger.Debugf("[public sdk retracer] get logs result: %#v", result)
+	return
 }
 
 func (rt *retracer) syncToFile() error {
-	rt.syncMu.Lock()
+	rt.syncLock.Lock()
 	snapShot, err := json.Marshal(rt.syncStatus)
 	if len(rt.syncStatus) == 0 || len(snapShot) == 0 {
 		snapShot = []byte("{}")
 	}
+	rt.syncLock.Unlock()
 	if err != nil {
-		logger.Errorf("Serialization error when marshaling channelHandled: %s", err)
+		err = fmt.Errorf("[public sdk retracer] marshal sync status failed: %s", err)
+		logger.Error(err)
 		return err
 	}
 
-	logger.Debugf("Start persist data to disk,content: %s", string(snapShot))
-	f, err := ioutil.TempFile(filepath.Dir(RETRACE_FILE_NAME), fmt.Sprintf(".%s.tmp", filepath.Base(RETRACE_FILE_NAME)))
+	f, err := ioutil.TempFile(filepath.Dir(RetraceFileName), fmt.Sprintf(".%s.tmp", filepath.Base(RetraceFileName)))
 	if err != nil {
-		logger.Errorf("Serialization creating temp file error: %s", err)
+		err = fmt.Errorf("[public sdk retracer] create retrace temp file failed: %s", err)
+		logger.Error(err)
 		return err
 	}
+	defer f.Close()
+
 	if _, err := f.Write(snapShot); err != nil {
-		f.Close()
-		os.Remove(f.Name())
-		logger.Errorf("Serialization writing to temp file error: %s", err)
+		err = fmt.Errorf("[public sdk retracer] write to temp file failed: %s", err)
+		logger.Error(err)
+		err = os.Remove(f.Name())
+		if err != nil {
+			err = fmt.Errorf("[public sdk retracer] remove file failed: %s", err)
+			logger.Error(err)
+		}
 		return err
 	}
-	f.Close()
-	err = os.Rename(f.Name(), RETRACE_FILE_NAME)
+	err = os.Rename(f.Name(), RetraceFileName)
 	if err != nil {
-		logger.Errorf("Rename temp file to file error: %s", err)
+		err = fmt.Errorf("[public sdk retracer] rename temp file to retrace file failed: %s", err)
+		logger.Error(err)
 		return err
 	}
-	rt.syncMu.Unlock()
+	logger.Debugf("[public sdk retracer] persist data to retrace file: %s", string(snapShot))
 
 	return nil
-}
-
-//seek logs in block num [from,to)
-func (rt *retracer) seekLogs(from uint64, to uint64) *[]types.Log {
-	result, _ := GetLogs(rt.httpClient, from, to, []common.Address{rt.contractAddress}, [][]common.Hash{})
-	return &result
-}
-
-func (rt *retracer) getHeight() (uint64, error) {
-	return GetHeight(rt.httpClient)
-}
-
-func (rt *retracer) dispatcher(log chan types.Log) {
-	var single types.Log
-	logPtr := <-rt.cache
-	for _, single = range *logPtr {
-		log <- single
-		logger.Debugf("[public retrace] dispatch serve log: %#v", single)
-	}
-}
-
-func (rt *retracer) getSyncHeight() uint64 {
-	rt.syncMu.Lock()
-	defer rt.syncMu.Unlock()
-	return rt.syncStatus[rt.contractAddress.Hex()]
 }

@@ -14,11 +14,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 
 VNT consortium chain depend on github.com/hyperledger/fabric project,
-proto files and the generated pb.go files is copied from 
+proto files and the generated pb.go files is copied from
 github.com/hyperledger/fabric/protos. However, to lower the dependence
-of the fabric project, VNT protos just modified the go_package and 
-java_package. Replace the github.com/hyperledger/fabric/protos to 
-github.com/hyperledger/kepler/protos. 
+of the fabric project, VNT protos just modified the go_package and
+java_package. Replace the github.com/hyperledger/fabric/protos to
+github.com/hyperledger/kepler/protos.
 */
 
 package peer

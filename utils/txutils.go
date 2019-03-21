@@ -7,10 +7,10 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	cb "github.com/vntchain/kepler/protos/common"
-	"github.com/vntchain/kepler/protos/peer"
 	"github.com/golang/protobuf/proto"
 	"github.com/golang/protobuf/ptypes/timestamp"
+	cb "github.com/vntchain/kepler/protos/common"
+	"github.com/vntchain/kepler/protos/peer"
 	"strings"
 	"time"
 )

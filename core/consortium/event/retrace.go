@@ -10,11 +10,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/golang/protobuf/proto"
+	"github.com/op/go-logging"
 	"github.com/vntchain/kepler/core/consortium/endorser"
 	"github.com/vntchain/kepler/protos/common"
 	"github.com/vntchain/kepler/utils"
-	"github.com/golang/protobuf/proto"
-	"github.com/op/go-logging"
 )
 
 var logger = logging.MustGetLogger("core/consortium/event")

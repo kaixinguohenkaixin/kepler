@@ -6,11 +6,11 @@ import (
 	"fmt"
 	"strconv"
 
+	"github.com/golang/protobuf/proto"
 	"github.com/vntchain/kepler/core/consortium/endorser"
 	"github.com/vntchain/kepler/protos/common"
 	pb "github.com/vntchain/kepler/protos/peer"
 	"github.com/vntchain/kepler/utils"
-	"github.com/golang/protobuf/proto"
 )
 
 type ChaincodeEventInfo struct {
