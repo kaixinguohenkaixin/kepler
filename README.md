@@ -1,4 +1,5 @@
 ## KEPLER
+[![Build Status](https://travis-ci.org/vntchain/kepler.svg?branch=release%2Fv0.6.0)](https://travis-ci.org/vntchain/kepler)
 
 Kepler是VNT Chain的重要组成部分，是Hubble和Galileo 之间的桥梁，是实现价值互联的关键。Kepler基于公证人机制，支持资产的跨链流转与信息的跨链交互，帮助各业务场景进行连接和扩展，提高资产流动性的同时降低交易成本，进而构建一个高效、低成本的聚合价值网络。
 
