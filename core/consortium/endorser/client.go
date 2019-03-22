@@ -9,7 +9,6 @@ import (
 	"io/ioutil"
 	"time"
 
-	"github.com/op/go-logging"
 	"github.com/pkg/errors"
 	"github.com/vntchain/kepler/event/consortium/consumer"
 	ab "github.com/vntchain/kepler/protos/orderer"
@@ -20,7 +19,6 @@ import (
 )
 
 var (
-	logger         = logging.MustGetLogger("endorser/client")
 	maxRecvMsgSize = 100 * 1024 * 1024
 	maxSendMsgSize = 100 * 1024 * 1024
 
@@ -110,10 +108,8 @@ func AddPemToCertPool(pemCerts []byte, pool *x509.CertPool) error {
 	return nil
 }
 
-//utility function to parse PEM-encoded certs
+// pemToX509Certs parse PEM-encoded certs
 func pemToX509Certs(pemCerts []byte) ([]*x509.Certificate, []string, error) {
-
-	//it's possible that multiple certs are encoded
 	certs := []*x509.Certificate{}
 	subjects := []string{}
 	for len(pemCerts) > 0 {
@@ -122,18 +118,11 @@ func pemToX509Certs(pemCerts []byte) ([]*x509.Certificate, []string, error) {
 		if block == nil {
 			break
 		}
-		/** TODO: check why msp does not add type to PEM header
-		if block.Type != "CERTIFICATE" || len(block.Headers) != 0 {
-			continue
-		}
-		*/
-
 		cert, err := x509.ParseCertificate(block.Bytes)
 		if err != nil {
 			return nil, subjects, err
 		} else {
 			certs = append(certs, cert)
-			//extract and append the subject
 			subjects = append(subjects, string(cert.RawSubject))
 		}
 	}
@@ -141,7 +130,6 @@ func pemToX509Certs(pemCerts []byte) ([]*x509.Certificate, []string, error) {
 }
 
 func ConfigFromEnv(env map[interface{}]interface{}) (address, override, eventAddress string, clientConfig ClientConfig, err error) {
-
 	address = env["address"].(string)
 	override = env["sn"].(string)
 
@@ -222,7 +210,6 @@ func NewGRPCClient(config ClientConfig) (*GRPCClient, error) {
 }
 
 func (client *GRPCClient) parseSecureOptions(opts *SecureOptions) error {
-
 	if opts == nil || !opts.UseTLS {
 		return nil
 	}
@@ -295,7 +282,6 @@ func (client *GRPCClient) SetMaxSendMsgSize(size int) {
 // SetServerRootCAs sets the list of authorities used to verify server
 // certificates based on a list of PEM-encoded X509 certificate authorities
 func (client *GRPCClient) SetServerRootCAs(serverRoots [][]byte) error {
-
 	// NOTE: if no serverRoots are specified, the current cert pool will be
 	// replaced with an empty one
 	certPool := x509.NewCertPool()
@@ -391,7 +377,7 @@ func (pc *PeerClient) Endorser() (pb.EndorserClient, error) {
 	return pb.NewEndorserClient(conn), nil
 }
 
-func (pc *PeerClient) StartEvent(adapter consumer.EventAdapter) (*consumer.EventsClient, error) {
+func (pc *PeerClient) StartEvent(adapter consumer.EventAdapter, privateKey string) (*consumer.EventsClient, error) {
 	conn, err := pc.grpcClient.NewConnection(pc.eventAddress, pc.sn)
 	if err != nil {
 		return nil, errors.WithMessage(err, fmt.Sprintf("endorser event client failed to connect to %s", pc.eventAddress))
@@ -401,7 +387,7 @@ func (pc *PeerClient) StartEvent(adapter consumer.EventAdapter) (*consumer.Event
 	if err != nil {
 		return nil, err
 	}
-	eventClient.Start(conn)
+	eventClient.Start(conn, privateKey)
 	return eventClient, nil
 }
 

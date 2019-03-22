@@ -5,9 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/op/go-logging"
-	"github.com/spf13/viper"
 	"github.com/vntchain/kepler/core/consortium/endorser"
-	"github.com/vntchain/kepler/core/consortium/event"
 	cevent "github.com/vntchain/kepler/event/consortium"
 	pubevent "github.com/vntchain/kepler/event/public"
 	"github.com/vntchain/kepler/utils"
@@ -17,12 +15,10 @@ import (
 	"time"
 )
 
-var logger = logging.MustGetLogger("ctxmanager")
+var logger = logging.MustGetLogger("consortium_txmanager")
 
 const (
-	// WaitTime = 10 * 60 * time.Second
 	WaitTime                      = 100 * time.Second
-	RandomSendTime                = 10
 	RandomTransactoinHandlerCount = 1
 	MaxResendCount                = 3
 )
@@ -43,30 +39,27 @@ type OrdererConfig struct {
 }
 
 type TxManager struct {
-	creator []byte
-	signer  interface{}
-	// tx *endorser.TransactionHandler
+	creator        []byte
+	signer         interface{}
 	endorserConfig []*EndorserConfig
 	ordererConfig  []*OrdererConfig
 	ths            []*endorser.TransactionHandler
 }
 
-func NewConsortiumNode() (tm *TxManager, err error) {
+func NewConsortiumTxManager(peers map[string]interface{}, orderers map[string]interface{}, privateKey string, certStr string, chaincodeID string, LogCToUser string, Transfered string, RollBack string, cTransfer string) (tm *TxManager, err error) {
 	tm = &TxManager{}
-	peers := viper.GetStringMap("consortium.peers")
-	orderers := viper.GetStringMap("consortium.orderers")
-	logger.Debugf("read the peers is %v", peers)
-	for _, value := range peers {
-		addr, sn, eventAddress, clientConfig, err := endorser.ConfigFromEnv(value.(map[interface{}]interface{}))
-		logger.Errorf("read the addr:%s  eventAddress:%s sn:%s", addr, eventAddress, sn)
+	for _, p := range peers {
+		addr, sn, eventAddress, clientConfig, err := endorser.ConfigFromEnv(p.(map[interface{}]interface{}))
 		if err != nil {
-			logger.Errorf("read yaml config file err(%v)", err)
+			err = fmt.Errorf("[consortium txmanager] resolve peer config [%#v] failed: %s", p, err)
+			logger.Error(err)
 			return nil, err
 		}
-
+		logger.Debugf("[consortium txmanager] peer [addr: %s, event addr: %s]", addr, eventAddress)
 		grpcClient, err := endorser.NewGRPCClient(clientConfig)
 		if err != nil {
-			logger.Errorf("start connect to consortium blockchain err(%v)", err)
+			err = fmt.Errorf("[consortium txmanager] create peer grpc client failed: %s", err)
+			logger.Error(err)
 			return nil, err
 		}
 
@@ -77,21 +70,20 @@ func NewConsortiumNode() (tm *TxManager, err error) {
 			ClientConfig: clientConfig,
 			GrpcClient:   grpcClient,
 		}
-
 		tm.endorserConfig = append(tm.endorserConfig, e)
 	}
 
-	for _, value := range orderers {
-
-		ordererAddress, orderersn, _, ordererConfig, err := endorser.ConfigFromEnv(value.(map[interface{}]interface{}))
+	for _, o := range orderers {
+		ordererAddress, orderersn, _, ordererConfig, err := endorser.ConfigFromEnv(o.(map[interface{}]interface{}))
 		if err != nil {
-			logger.Errorf("read yaml config file err(%v)", err)
+			err = fmt.Errorf("[consortium txmanager] resolve orderer config [%#v] failed: %s", o, err)
+			logger.Error(err)
 			return nil, err
 		}
-
 		ordererClient, err := endorser.NewGRPCClient(ordererConfig)
 		if err != nil {
-			logger.Errorf("start connect to consortium blockchain err(%v)", err)
+			err = fmt.Errorf("[consortium txmanager] create orderer grpc client failed: %s", err)
+			logger.Error(err)
 			return nil, err
 		}
 
@@ -101,43 +93,74 @@ func NewConsortiumNode() (tm *TxManager, err error) {
 			OrdererConfig:  ordererConfig,
 			OrdererClient:  ordererClient,
 		}
-
 		tm.ordererConfig = append(tm.ordererConfig, o)
 	}
 
-	logger.Debugf("the private key is %s", viper.GetString("consortium.privateKey"))
-	tm.signer, err = utils.ReadPrivateKey(viper.GetString("consortium.privateKey"), []byte{})
+	tm.signer, err = utils.ReadPrivateKey(privateKey, []byte{})
 	if err != nil {
-		logger.Errorf("read private key from path err %v", err)
-		return nil, err
+		err = fmt.Errorf("[consortium txmanager] read private key from path [%s] failed: %s", privateKey, err)
+		logger.Error(err)
+		return
 	}
 
-	cert, err := utils.ReadCertFile(viper.GetString("consortium.cert"))
+	cert, err := utils.ReadCertFile(certStr)
 	if err != nil {
-		logger.Errorf("read cert file from path err %v", err)
-		return nil, err
+		err = fmt.Errorf("[consortium txmanager] read cert file from path [%s] failed: %s", certStr, err)
+		logger.Error(err)
+		return
 	}
-
 	tm.creator, err = utils.SerializeCert(cert)
 	if err != nil {
-		logger.Errorf("serialize the cert err %v", err)
-		return nil, err
+		err = fmt.Errorf("[consortium txmanager] serialize cert failed: %s", err)
+		logger.Error(err)
+		return
 	}
-	tm.initTransactionHandlers()
-	return tm, nil
 
+	tm.initTransactionHandlers(chaincodeID, LogCToUser, Transfered, RollBack, cTransfer)
+	return
 }
 
-func (tm *TxManager) initTransactionHandlers() {
+func (tm *TxManager) initTransactionHandlers(chaincodeID string, LogCToUser string, Transfered string, RollBack string, cTransfer string) {
 	tm.ths = make([]*endorser.TransactionHandler, 0)
 	for i := 0; i < RandomTransactoinHandlerCount; i++ {
-		th, err := tm.RandomTxHandler()
+		th, err := tm.RandomTxHandler(chaincodeID, LogCToUser, Transfered, RollBack, cTransfer)
 		if err != nil {
-			logger.Errorf("init random tx handler err:%v", err)
+			logger.Errorf("[consortium txmanager] init random tx handler failed: %s", err)
 			continue
 		}
 		tm.ths = append(tm.ths, th)
 	}
+}
+
+func (tm *TxManager) RandomTxHandler(chaincodeID string, LogCToUser string, Transfered string, RollBack string, cTransfer string) (*endorser.TransactionHandler, error) {
+	endorserConfig, err := tm.PickEndorserConfig()
+	if err != nil {
+		err := fmt.Errorf("[consortium txmanager] pick endorser config list failed: %s", err)
+		logger.Error(err)
+		return nil, err
+	}
+	ordererConfig, err := tm.PickOrdererConfig()
+	if err != nil {
+		err := fmt.Errorf("[consortium txmanager] pick orderer config list failed: %s", err)
+		logger.Error(err)
+		return nil, err
+	}
+
+	grpcClient := endorserConfig.GrpcClient
+	addr := endorserConfig.Address
+	sn := endorserConfig.SN
+	eventAddress := endorserConfig.EventAddress
+	ordererClient := ordererConfig.OrdererClient
+	ordererAddress := ordererConfig.OrdererAddress
+	orderersn := ordererConfig.OrdererSN
+	peerClient := endorser.NewPeerClient(grpcClient, ordererClient, addr, sn, eventAddress, ordererAddress, orderersn)
+	th := &endorser.TransactionHandler{PeerClient: peerClient}
+	err = th.Init(tm.GetSigner(), tm.GetCreator(), chaincodeID, LogCToUser, Transfered, RollBack, cTransfer)
+	if err != nil {
+		err = fmt.Errorf("[consortium txmanager] transaction handler init failed: %s", err)
+		logger.Error(err)
+	}
+	return th, err
 }
 
 func (tm *TxManager) GetCreator() []byte {
@@ -150,7 +173,9 @@ func (tm *TxManager) GetSigner() interface{} {
 
 func (tm *TxManager) PickEndorserConfig() (*EndorserConfig, error) {
 	if len(tm.endorserConfig) == 0 {
-		return nil, fmt.Errorf("the endorser config is empty")
+		err := fmt.Errorf("[consortium txmanager] endorser config list is nil")
+		logger.Error(err)
+		return nil, err
 	}
 	i := rand.Intn(len(tm.endorserConfig))
 	return tm.endorserConfig[i], nil
@@ -158,150 +183,111 @@ func (tm *TxManager) PickEndorserConfig() (*EndorserConfig, error) {
 
 func (tm *TxManager) PickOrdererConfig() (*OrdererConfig, error) {
 	if len(tm.ordererConfig) == 0 {
-		return nil, fmt.Errorf("the orderer config is empty")
+		err := fmt.Errorf("[consortium txmanager] orderer config list is nil")
+		logger.Error(err)
+		return nil, err
 	}
 	i := rand.Intn(len(tm.ordererConfig))
 	return tm.ordererConfig[i], nil
 }
 
-//下次改成初始化一批，然后从中选取，而不是这样每次都new
-func (tm *TxManager) RandomTxHandler() (*endorser.TransactionHandler, error) {
-
-	endorserConfig, err := tm.PickEndorserConfig()
-	if err != nil {
-		return nil, err
-	}
-
-	ordererConfig, err := tm.PickOrdererConfig()
-	if err != nil {
-		return nil, err
-	}
-
-	grpcClient := endorserConfig.GrpcClient
-	addr := endorserConfig.Address
-	sn := endorserConfig.SN
-	eventAddress := endorserConfig.EventAddress
-
-	ordererClient := ordererConfig.OrdererClient
-	ordererAddress := ordererConfig.OrdererAddress
-	orderersn := ordererConfig.OrdererSN
-
-	peerClient := endorser.NewPeerClient(grpcClient, ordererClient, addr, sn, eventAddress, ordererAddress, orderersn)
-
-	th := &endorser.TransactionHandler{PeerClient: peerClient}
-	err = th.Init(tm.GetSigner(), tm.GetCreator())
-	return th, err
-
-}
-
 func (tm *TxManager) PickRandomTxHandler() (*endorser.TransactionHandler, error) {
 	if len(tm.ths) == 0 {
-		return nil, fmt.Errorf("the transaction handlers is empty")
+		err := fmt.Errorf("[consortium txmanager] transaction handler list is nil")
+		logger.Error(err)
+		return nil, err
 	}
 	i := rand.Intn(len(tm.ths))
 	return tm.ths[i], nil
 }
 
 func (tm *TxManager) SendTransaction(th *endorser.TransactionHandler, c chan int, cc chan interface{}, chainId, chaincodeName, version, funcName, cid string, args ...string) (string, string, error) {
-
 	prop, txid, err := th.CreateProposal(chainId, chaincodeName, version, funcName, tm.creator, args...)
 	if err != nil {
-		logger.Errorf("create proposal err %v", err)
+		err := fmt.Errorf("[consortium txmanager] create proposal failed: %s", err)
+		logger.Error(err)
 		return txid, cid, err
 	}
 
 	proposalResponse, err := th.ProcessProposal(tm.signer.(*ecdsa.PrivateKey), prop)
-	logger.Debugf("the proposal response is result:%s err:%v", proposalResponse, err)
 	if err != nil {
-		logger.Errorf("start new peerClient instance err(%v)", err)
-		if proposalResponse == nil {
-			// 发送proposal失败
-		}
+		err := fmt.Errorf("[consortium txmanager] process proposal failed: %s", err)
+		logger.Error(err)
 		return txid, cid, err
 	}
+	logger.Debugf("[consortium txmanager] proposal response: %#v", *proposalResponse)
 
 	th.RegisterTxId(txid, c, cid, cc)
-
 	err = th.SendTransaction(prop, tm.signer.(*ecdsa.PrivateKey), tm.creator, proposalResponse)
 	if err != nil {
-		logger.Errorf("send transaction to orderer err:%v", err)
+		err := fmt.Errorf("[consortium txmanager] send transaction failed: %s", err)
+		logger.Error(err)
 		th.UnregisterTxId(txid)
 		th.UnregisterCId(cid)
 		return txid, cid, err
 	}
-
 	return txid, cid, nil
 }
 
 func (tm *TxManager) WaitUntilTransactionSuccess(callback func(logCToUser interface{}) bool, query func(q ...interface{}) bool, revert func(q ...interface{}), chainId, chaincodeName, version, funcName, cid string, args ...string) {
-	c := make(chan int, 1)
-	cc := make(chan interface{}, 1)
-
 	th, err := tm.PickRandomTxHandler()
 	if err != nil {
-		// time.Sleep(time.Second)
-		// continue
-		logger.Errorf("transaction handler random select error!!!!!!!!!!!!!!!")
+		err := fmt.Errorf("[consortium txmanager] pick random transaction handler failed: %s", err)
+		logger.Error(err)
+		return
 	}
+
+	c := make(chan int, 1)
+	cc := make(chan interface{}, 1)
 	resendCount := 0
-
 	for {
-
 		isBreak := false
-
-		//随机等一段时间 否则会出现大量的对一个账户操作，导致交易重合并失败
-		// randomTime := rand.Intn(RandomSendTime)
-		// time.Sleep(time.Duration(randomTime)*time.Second)
 		txid, cid, err := tm.SendTransaction(th, c, cc, chainId, chaincodeName, version, funcName, cid, args...)
 		if err != nil {
-			logger.Errorf("send transaction to consortium chain err:(%s),will revert", err)
+			err := fmt.Errorf("[consortium txmanager] send transaction failed: %s", err)
+			logger.Error(err)
 			revert(th, tm)
 			return
 		} else {
 			timeout := time.NewTimer(WaitTime)
-
 			for {
 				isBreakLoop := false
 				select {
 				case txflag := <-c:
-					logger.Debugf("receive the txflag is %v", txflag)
 					if txflag == 1 {
-						//重发交易
-						logger.Debugf("transaction %s is failed and later will resend it", txid)
+						// 交易失败
 						isBreakLoop = true
 						resendCount += 1
 						if resendCount >= MaxResendCount {
 							isBreak = true
 							revert(th, tm)
+						} else {
+							logger.Debugf("[consortium txmanager] transaction [%s] failed, resend it later", txid)
 						}
-						// break
 					} else if txflag == 2 {
-						//交易成功
-						logger.Debugf("transaction %s is successed", txid)
+						// 交易成功
+						logger.Infof("[consortium txmanager] transaction [%s] succeed", txid)
 					}
 				case eventflag := <-cc:
 					switch eventflag.(type) {
 					case *cevent.LogCToUser:
-						//整个事件发送成功，某节点确认了
 						isSuccess := callback(eventflag)
 						if isSuccess {
 							isBreakLoop = true
 							isBreak = true
-							logger.Infof("transaction:%s is approved success!!!", txid)
+							logger.Infof("[consortium txmanager] approve transaction [%s] succeed!", txid)
 						}
 					case *cevent.LogTransfered:
-						//整个事件成功
 						isSuccess := callback(eventflag)
 						if isSuccess {
 							isBreakLoop = true
 							isBreak = true
-							logger.Infof("transaction:%s is transfered success!!!", txid)
+							logger.Infof("[consortium txmanager] transfer transaction [%s] succeed!", txid)
 						}
 					}
 				case <-timeout.C:
 					th.UnregisterTxId(txid)
 					isBreakLoop = true
-					//查询一下该交易是否已经完全成功，若成功则直接退出
 					isSuccess := query(th, tm, cid)
 					if isSuccess {
 						isBreak = true
@@ -312,17 +298,15 @@ func (tm *TxManager) WaitUntilTransactionSuccess(callback func(logCToUser interf
 					break
 				}
 			}
-
 		}
-
 		th.UnregisterTxId(txid)
 		if isBreak {
 			break
 		}
-
 	}
 	th.UnregisterCId(cid)
-	//出去前要把cc的消息全部消费完
+
+	// 出去前要把cc的消息全部消费完
 	for {
 		isBreak := false
 		select {
@@ -335,62 +319,70 @@ func (tm *TxManager) WaitUntilTransactionSuccess(callback func(logCToUser interf
 			break
 		}
 	}
-	logger.Debugf("exit WaitUntilTransactionSuccess !!!!")
+	logger.Debugf("[consortium txmanager] exit WaitUntilTransactionSuccess")
 }
 
-func (tm *TxManager) RollBack(userToC endorser.ChaincodeEventInfo) {
-	// go tm.WaitUntilTransactionSuccess(chainId,chaincodeName,version,funcName,cid,args...)
-	orgName := viper.GetString("consortium.mspId")
+func (tm *TxManager) RollBack(userToC endorser.ChaincodeEventInfo, args ...interface{}) {
+	if len(args) <= 9 {
+		err := fmt.Errorf("[consortium txmanager] rollback args length [%s] != [%s]", len(args), 9)
+		logger.Error(err)
+	}
+	orgName := args[0].(string)
+	channelName := args[1].(string)
+	chaincodeName := args[2].(string)
+	version := args[3].(string)
+	queryCTransfer := args[4].(string)
+	cTransfer := args[5].(string)
+	queryCApprove := args[6].(string)
+	cApprove := args[7].(string)
+	agreedCount := args[8].(int)
+
 	txid := userToC.TxID
 	value := big.NewInt(0)
 	logUserToC := cevent.GetUserToC(userToC.Payload)
 	value.SetString(logUserToC.Value, 10)
 	agreedOrgs := make(map[string]*cevent.LogCToUser)
-	channelName := viper.GetString("consortium.channelName")
-	chaincodeName := viper.GetString("consortium.chaincodeName")
-	version := viper.GetString("consortium.version")
-	queryCTransfer := viper.GetString("consortium.queryCTransfer")
-	cTransfer := viper.GetString("consortium.cTransfer")
-	queryCApprove := viper.GetString("consortium.queryCApprove")
-	cApprove := viper.GetString("consortium.cApprove")
 
 	cApproveCallback := func(data interface{}) bool {
 		logCToUser := data.(*cevent.LogCToUser)
-		logger.Debugf("the callback received an agreed org %v", logCToUser)
+		logger.Debugf("[consortium txmanager] received LogCToUser: %#v", *logCToUser)
 		if logCToUser.TxId != txid {
+			err := fmt.Errorf("[consortium txmanager] LogCToUser event txid [%s] != [%s]", logCToUser.TxId, txid)
+			logger.Error(err)
 			return false
 		}
 		if _, ok := agreedOrgs[logCToUser.AgreedOrg]; !ok {
 			agreedOrgs[logCToUser.AgreedOrg] = logCToUser
 		}
-		logger.Debugf("the agreed orgs length is %d", len(agreedOrgs))
-		if len(agreedOrgs) >= viper.GetInt("consortium.agreedCount") {
-			//发送cTransfer交易，并监听
+		if len(agreedOrgs) >= agreedCount {
 			go tm.WaitUntilTransactionSuccess(
 				func(cdata interface{}) bool {
 					return true
 				},
 				func(args ...interface{}) bool {
 					if len(args) != 3 {
+						err := fmt.Errorf("[consortium txmanager] args length [%d] != [%d]", len(args), 3)
+						logger.Error(err)
 						return false
 					}
 					th := args[0].(*endorser.TransactionHandler)
 					tm := args[1].(*TxManager)
 					txid := args[2].(string)
-
 					prop, txid, err := th.CreateProposal(channelName, chaincodeName, version, queryCTransfer, tm.GetCreator(), txid)
 					if err != nil {
-						logger.Errorf("create proposal in query err %v", err)
+						err = fmt.Errorf("[consortium txmanager] create queryTransfer proposal failed: %s", err)
+						logger.Error(err)
 						return false
 					}
 					if isOk, err := strconv.ParseBool(string(prop.Payload)); err != nil {
+						err = fmt.Errorf("[consortium txmanager] proposal payload parse failed: %s", err)
+						logger.Error(err)
 						return false
 					} else {
 						return isOk
 					}
 				}, func(args ...interface{}) {
-					// rollback in rollback, do nothing
-					logger.Errorf("Rollback cTransfer failed! Do nothing!\n\n")
+					logger.Errorf("[consortium txmanager] rollback cTransfer failed")
 				}, channelName, chaincodeName, version, cTransfer, cTransfer+txid, txid)
 
 			return true
@@ -400,6 +392,8 @@ func (tm *TxManager) RollBack(userToC endorser.ChaincodeEventInfo) {
 
 	cApproveQuery := func(args ...interface{}) bool {
 		if len(args) != 3 {
+			err := fmt.Errorf("[consortium txmanager] args length [%d] != [%d]", len(args), 3)
+			logger.Error(err)
 			return false
 		}
 		th := args[0].(*endorser.TransactionHandler)
@@ -408,66 +402,32 @@ func (tm *TxManager) RollBack(userToC endorser.ChaincodeEventInfo) {
 
 		prop, txid, err := th.CreateProposal(channelName, chaincodeName, version, queryCApprove, tm.GetCreator(), txid)
 		if err != nil {
-			logger.Errorf("create proposal in query err %v", err)
+			err = fmt.Errorf("[consortium txmanager] create queryApprove proposal failed: %s", err)
+			logger.Error(err)
 			return false
 		}
-
 		proposalResponse, err := th.ProcessProposal(tm.GetSigner().(*ecdsa.PrivateKey), prop)
-		logger.Infof("the proposal response is result:%s err:%v", proposalResponse, err)
 		if proposalResponse.Response != nil {
 			var logCToUsers map[string]pubevent.KVAppendValue
 			if proposalResponse.Response.Payload != nil {
 				err = json.Unmarshal(proposalResponse.Response.Payload, &logCToUsers)
 				if err != nil {
-					logger.Errorf("the query result is err:%v", err)
+					err = fmt.Errorf("[consortium txmanager] queryApprove response unmarshal failed: %s", err)
+					logger.Error(err)
 					return false
 				}
 				if _, ok := logCToUsers[orgName]; ok {
 					return true
 				}
 			}
-
 		}
 		return false
 	}
 
 	cApproveRevert := func(args ...interface{}) {
-		logger.Errorf("Rollback cApprove failed! Do nothing!\n")
+		logger.Errorf("[consortium txmanager] rollback cApprove failed")
 	}
 
 	go tm.WaitUntilTransactionSuccess(cApproveCallback, cApproveQuery, cApproveRevert,
 		channelName, chaincodeName, version, cApprove, txid, txid, fmt.Sprintf("%d", value), logUserToC.AccountF, orgName)
-}
-
-func (tm *TxManager) GetTransactionByID(chainId, txid string) (string, error) {
-	th, err := tm.RandomTxHandler()
-	if err != nil {
-		return "", err
-	}
-
-	generator := []byte("public chain txid")
-	generator = append(generator, ([]byte("public tx public key ...."))...)
-
-	prop, _, err := th.CreateProposalWithTxGenerator("", "qscc", "", "GetTransactionByID", tm.creator, generator, chainId, txid)
-	if err != nil {
-		logger.Errorf("create proposal err %v", err)
-		return "", err
-	}
-
-	proposalResponse, err := th.ProcessProposal(tm.signer.(*ecdsa.PrivateKey), prop)
-	logger.Infof("proposal response is result:%s err:%v", proposalResponse, err)
-	if err != nil {
-		return "", err
-	}
-	status, err := utils.UnmarshalValidateCodeFromProposalResponse(proposalResponse)
-
-	return status, err
-
-}
-
-func (tm *TxManager) RetraceEvent(log chan event.ChaincodeEventInfo, config event.RetraceConf) {
-	config.Signer = tm.signer
-	config.Creator = tm.creator
-	retracer := event.InitRetracer(config)
-	go retracer.Process(log)
 }

@@ -1,7 +1,7 @@
 package public
 
 import (
-	ethcom "github.com/vntchain/go-vnt/common"
+	pubcom "github.com/vntchain/go-vnt/common"
 	"math/big"
 )
 
@@ -15,8 +15,8 @@ type LogUserToC struct {
 	CTxId       []byte
 	Value       *big.Int
 	BlockNumber uint64
-	BlockHash   ethcom.Hash
-	TxHash      ethcom.Hash
+	BlockHash   pubcom.Hash
+	TxHash      pubcom.Hash
 	TxIndex     uint
 	Removed     bool
 }

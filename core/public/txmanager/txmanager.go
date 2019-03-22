@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/op/go-logging"
-	"github.com/spf13/viper"
 	"github.com/vntchain/go-vnt/accounts/keystore"
 	pubcom "github.com/vntchain/go-vnt/common"
 	"github.com/vntchain/kepler/core/consortium/endorser"
@@ -24,11 +23,11 @@ var logger = logging.MustGetLogger("public_txmanager")
 const (
 	DeltaConfirmations = 3
 	WaitTime           = 10 * time.Minute
-	CheckInterval	   = 3 * time.Second
+	CheckInterval      = 3 * time.Second
 	ConfirmedCount     = 10
-	GasLimit		   = 2000000
-	Price			   = 10
-	RetryInterval	   = 1 * time.Second
+	GasLimit           = 2000000
+	Price              = 10
+	RetryInterval      = 1 * time.Second
 )
 
 type TxManager struct {
@@ -47,10 +46,10 @@ func NewPublicTxManager(ks *keystore.KeyStore, keyDir string, chainId int, nodes
 		return
 	}
 	tm = &TxManager{
-		keyDir: keyDir,
+		keyDir:  keyDir,
 		chainId: chainId,
-		cm: cm,
-		nm: make([]*NodeManager, 0),
+		cm:      cm,
+		nm:      make([]*NodeManager, 0),
 	}
 
 	for key, node := range nodes {
@@ -199,7 +198,7 @@ func (tm *TxManager) SendPublicRollback(txidBytes []byte, chainIdInt int, CRollb
 	return nil
 }
 
-func (tm *TxManager) HandleUserToCEvent(userToC *pubevent.LogUserToC, consortiumManager *cTxManager.TxManager, orgName string, channelName string, chaincodeName string, version string, queryCTransfer string, cTransfer string, queryCApprove string, cApprove string) {
+func (tm *TxManager) HandleUserToCEvent(userToC *pubevent.LogUserToC, consortiumManager *cTxManager.TxManager, orgName string, channelName string, chaincodeName string, version string, queryCTransfer string, cTransfer string, queryCApprove string, cApprove string, agreedCnt int, queryCRevert string, cRevert string, chainId int, CRollback string, abiPath string, passwd string) {
 	err := tm.WaitUntilDeltaConfirmations(userToC)
 	if err != nil {
 		err = fmt.Errorf("[public txManager] wait public UerToC event failed: %s", err)
@@ -211,21 +210,22 @@ func (tm *TxManager) HandleUserToCEvent(userToC *pubevent.LogUserToC, consortium
 	value := userToC.Value.Uint64()
 	acctName := string(userToC.Ac_address)
 	agreedOrgs := make(map[string]*cevent.LogCToUser)
-	go consortiumManager.WaitUntilTransactionSuccess(func(data interface{}) bool {
+
+	callback := func(data interface{}) bool {
 		logCToUser := data.(*cevent.LogCToUser)
-		logger.Debugf("[public txManager] callback received an agreed org %v", logCToUser)
 		if logCToUser.TxId != txid {
 			return false
 		}
+		logger.Debugf("[public txManager] recieve consortium LogCToUser event: %#v", *logCToUser)
+
 		if _, ok := agreedOrgs[logCToUser.AgreedOrg]; !ok {
 			agreedOrgs[logCToUser.AgreedOrg] = logCToUser
 		}
-		logger.Debugf("agreed orgs length is %d", len(agreedOrgs))
-		if len(agreedOrgs) >= viper.GetInt("consortium.agreedCount") {
-			//发送cTransfer交易，并监听
-			go consortiumManager.WaitUntilTransactionSuccess(func(cdata interface{}) bool {
+		if len(agreedOrgs) >= agreedCnt {
+			cCallback := func(cdata interface{}) bool {
 				return true
-			}, func(args ...interface{}) bool {
+			}
+			cQuery := func(args ...interface{}) bool {
 				if len(args) != 3 {
 					return false
 				}
@@ -235,30 +235,32 @@ func (tm *TxManager) HandleUserToCEvent(userToC *pubevent.LogUserToC, consortium
 
 				prop, txid, err := th.CreateProposal(channelName, chaincodeName, version, queryCTransfer, tm.GetCreator(), txid)
 				if err != nil {
-					logger.Errorf("create proposal in query err %v", err)
+					err = fmt.Errorf("[public txManager] create consortium query proposal failed: %s", err)
+					logger.Error(err)
 					return false
 				}
-
 				proposalResponse, err := th.ProcessProposal(tm.GetSigner().(*ecdsa.PrivateKey), prop)
-				logger.Infof("callback queryCTransfer proposal response is result:%s err:%v", proposalResponse, err)
+				logger.Debugf("[public txManager] consortium [queryCTransfer] proposal response: %s error: %#v", proposalResponse, err)
 				if proposalResponse.Response != nil && err == nil {
 					if proposalResponse.Response.Payload != nil {
 						return true
 					}
-
 				}
 				return false
-			}, func(args ...interface{}) {
-				//revert the eth in public chain
-				_th := args[0].(*endorser.TransactionHandler)
-				_tm := args[1].(*cTxManager.TxManager)
-				tm.revert(_th, _tm, userToC.CTxId, userToC.Value)
-			}, channelName, chaincodeName, version, cTransfer, cTransfer+txid, txid)
+			}
+			cRevert := func(args ...interface{}) {
+				cTh := args[0].(*endorser.TransactionHandler)
+				cTm := args[1].(*cTxManager.TxManager)
+				tm.revert(cTh, cTm, userToC.CTxId, channelName, chaincodeName, version, queryCTransfer, queryCRevert, cRevert, chainId, CRollback, abiPath, passwd)
+			}
 
+			go consortiumManager.WaitUntilTransactionSuccess(cCallback, cQuery, cRevert, channelName, chaincodeName, version, cTransfer, cTransfer+txid, txid)
 			return true
 		}
 		return false
-	}, func(args ...interface{}) bool {
+	}
+
+	query := func(args ...interface{}) bool {
 		if len(args) != 3 {
 			return false
 		}
@@ -268,39 +270,42 @@ func (tm *TxManager) HandleUserToCEvent(userToC *pubevent.LogUserToC, consortium
 
 		prop, txid, err := th.CreateProposal(channelName, chaincodeName, version, queryCApprove, tm.GetCreator(), txid)
 		if err != nil {
-			logger.Errorf("create proposal in query err %v", err)
+			err = fmt.Errorf("[public txManager] create consortium query proposal failed: %s", err)
+			logger.Error(err)
 			return false
 		}
 
 		proposalResponse, err := th.ProcessProposal(tm.GetSigner().(*ecdsa.PrivateKey), prop)
-		logger.Infof("callback queryCApprove proposal response is result:%s err:%v", proposalResponse, err)
+		logger.Debugf("[public txManager] consortium [queryCApprove] proposal response: %s error: %#v", proposalResponse, err)
 		if proposalResponse.Response != nil {
 			var logCToUsers map[string]pubevent.KVAppendValue
 			if proposalResponse.Response.Payload != nil {
 				err = json.Unmarshal(proposalResponse.Response.Payload, &logCToUsers)
 				if err != nil {
-					logger.Errorf("the query result is err:%v", err)
+					err = fmt.Errorf("[public txManager] [queryCApprove] proposal response unmarshal failed: %s", err)
+					logger.Error(err)
 					return false
 				}
 				if _, ok := logCToUsers[orgName]; ok {
 					return true
 				}
 			}
-
 		}
 		return false
+	}
 
-	}, func(args ...interface{}) {
-		_th := args[0].(*endorser.TransactionHandler)
-		_tm := args[1].(*cTxManager.TxManager)
-		//revert the eth in public chain
-		tm.revert(_th, _tm, userToC.CTxId, userToC.Value)
-	}, channelName, chaincodeName, version, cApprove, txid, txid, fmt.Sprintf("%d", value), acctName, orgName)
+	revert := func(args ...interface{}) {
+		cTh := args[0].(*endorser.TransactionHandler)
+		cTm := args[1].(*cTxManager.TxManager)
+		tm.revert(cTh, cTm, userToC.CTxId, channelName, chaincodeName, version, queryCTransfer, queryCRevert, cRevert, chainId, CRollback, abiPath, passwd)
+	}
+
+	go consortiumManager.WaitUntilTransactionSuccess(callback, query, revert, channelName, chaincodeName, version, cApprove, txid, txid, fmt.Sprintf("%d", value), acctName, orgName)
 }
 
-func (tm *TxManager) revert(_th *endorser.TransactionHandler, _tm *cTxManager.TxManager, _txid []byte, _value *big.Int) {
-	logger.Debugf("revert _txid is %s", pubcom.Bytes2Hex(_txid))
-	//TODO 目前此处简单粗暴的直接查询联盟链节点transfer或revert是否成功，但是存在以下场景
+func (tm *TxManager) revert(cTh *endorser.TransactionHandler, cTm *cTxManager.TxManager, txidBytes []byte, channelName string, chaincodeName string, version string, queryCTransfer string, queryCRevert string, cRevert string, chainId int, CRollback string, abiPath string, passwd string) {
+	logger.Debugf("[public txManager] revert txid: %s", string(txidBytes))
+	//FIXME: 目前此处简单粗暴的直接查询联盟链节点transfer或revert是否成功，但是存在以下场景
 	/*
 		A、B、C三个节点同时发送CTransfer交易，但是在100s内都没有监听到该事件，同时发送revert请求，此时公链的revert执行
 		但是联盟链接收到CTransfer交易成功，则此处不能简单的query，而是发送一个revert事件，只有监听到revert事件才能真正的
@@ -309,51 +314,49 @@ func (tm *TxManager) revert(_th *endorser.TransactionHandler, _tm *cTxManager.Tx
 		有一个简单的想法，可以学tcp的三次握手协议，但是改动太大，此处暂时先用query检查代替，后续得调整整体的框架
 	*/
 
-	txid := string(_txid)
-	logger.Debugf("revert: the txid is %s", txid)
-	channelName := viper.GetString("consortium.channelName")
-	chaincodeName := viper.GetString("consortium.chaincodeName")
-	version := viper.GetString("consortium.version")
-	queryCTransfer := viper.GetString("consortium.queryCTransfer")
-	queryCRevert := viper.GetString("consortium.queryCRevert")
-	cRevert := viper.GetString("consortium.cRevert")
+	txid := string(txidBytes)
+	logger.Debugf("[public txManager] revert txid: %s", txid)
 
-	prop, transId, err := _th.CreateProposal(channelName, chaincodeName, version, queryCTransfer, _tm.GetCreator(), txid)
+	// 查询该交易是否已经成功，如果成功则不回退
+	prop, transId, err := cTh.CreateProposal(channelName, chaincodeName, version, queryCTransfer, cTm.GetCreator(), txid)
 	if err != nil {
-		logger.Panicf("create proposal in query err %v", err)
+		err = fmt.Errorf("[public txManager] create consortium [queryCTransfer] proposal failed: %s", err)
+		// FIXME: 有没有更好的办法？
+		logger.Panic(err)
 	}
-
-	proposalResponse, err := _th.ProcessProposal(_tm.GetSigner().(*ecdsa.PrivateKey), prop)
-	logger.Infof("revert and try to queryCTranfer, proposal response is result:%s err:%v", proposalResponse, err)
+	proposalResponse, err := cTh.ProcessProposal(cTm.GetSigner().(*ecdsa.PrivateKey), prop)
+	logger.Debugf("[public txManager] consortium [queryCTransfer] proposal response: %s error: %#v", proposalResponse, err)
 	if proposalResponse.Response != nil {
-		//logger.Infof("the proposal response payload is %s ",proposalResponse.Response.Payload)
 		var logTransfered cevent.LogTransfered
 		if proposalResponse.Response.Payload != nil {
 			err = json.Unmarshal(proposalResponse.Response.Payload, &logTransfered)
 			if err != nil {
-				logger.Errorf("queryCTransfer result is err:%v", err)
+				err = fmt.Errorf("[public txManager] [queryCTransfer] proposal response unmarshal failed: %s", err)
+				logger.Error(err)
 			}
-			logger.Warningf("the revert query txid exist and will return %#v", logTransfered)
+			logger.Warningf("[public txManager] revert [transfered] transaction exist: %#v", logTransfered)
 			return
 		}
 	}
 
 	// 查询该交易是否已经被回退，如果已经回退，则没必要再次回退
-	prop, transId, err = _th.CreateProposal(channelName, chaincodeName, version, queryCRevert, _tm.GetCreator(), txid)
+	prop, transId, err = cTh.CreateProposal(channelName, chaincodeName, version, queryCRevert, cTm.GetCreator(), txid)
 	if err != nil {
-		logger.Panicf("create proposal in query err %v", err)
+		err = fmt.Errorf("[public txManager] create consortium [queryCRevert] proposal failed: %s", err)
+		// FIXME: 有没有更好的办法？
+		logger.Panic(err)
 	}
-
-	proposalResponse, err = _th.ProcessProposal(_tm.GetSigner().(*ecdsa.PrivateKey), prop)
-	logger.Infof("revert and try to queryCRevert, proposal response is result:%s err:%v", proposalResponse, err)
+	proposalResponse, err = cTh.ProcessProposal(cTm.GetSigner().(*ecdsa.PrivateKey), prop)
+	logger.Debugf("[public txManager] consortium [queryCRevert] proposal response: %s error: %#v", proposalResponse, err)
 	if proposalResponse.Response != nil {
 		var orgName string
 		if proposalResponse.Response.Payload != nil {
 			err = json.Unmarshal(proposalResponse.Response.Payload, &orgName)
 			if err != nil {
-				logger.Errorf("queryCRevert result is err:%v", err)
+				err = fmt.Errorf("[public txManager] [queryCRevert] proposal response unmarshal failed: %s", err)
+				logger.Error(err)
 			}
-			logger.Warningf("cRevert query txid[%s] exist and will return %s", txid, orgName)
+			logger.Warningf("[public txManager] transaction [%s] revert by [%s]: %#v", txid, orgName)
 			return
 		}
 	}
@@ -361,42 +364,41 @@ func (tm *TxManager) revert(_th *endorser.TransactionHandler, _tm *cTxManager.Tx
 	// 记录该交易的回退信息
 	c := make(chan int, 1)
 	cc := make(chan interface{}, 1)
-	transId, _, err = _tm.SendTransaction(_th, c, cc, channelName, chaincodeName, version, cRevert, cRevert+txid, txid)
+	transId, _, err = cTm.SendTransaction(cTh, c, cc, channelName, chaincodeName, version, cRevert, cRevert+txid, txid)
 	if err != nil {
-		logger.Errorf("Record cRevert failed, err: %s", err)
+		err = fmt.Errorf("[public txManager] send [cRevert] transaction failed: %s", err)
+		logger.Error(err)
+		return
 	}
-	logger.Debugf("Record cRevert, revert txid: %s, transaction txid: %s", txid, transId)
+	logger.Debugf("[public txManager] record cRevert [txid: %s, transaction txid: %s]", txid, transId)
 
-	chainId := viper.GetInt("public.chainId")
-	CRollback := viper.GetString("public.CRollback")
-	abiPath := viper.GetString("public.contract.abi")
-	passwd := viper.GetString("public.keypass")
-	if err := tm.SendPublicRollback(_txid, chainId, CRollback, abiPath, passwd); err != nil {
-		logger.Errorf("Revert RollbackToC failed: %s", err)
+	if err := tm.SendPublicRollback(txidBytes, chainId, CRollback, abiPath, passwd); err != nil {
+		err = fmt.Errorf("[public txManager] send public [Rollback] transaction failed: %s", err)
+		logger.Error(err)
 	}
+	return
 }
-func (tm *TxManager) SendRawTransaction(isWait bool, methodName string, args ...interface{}) (string, error) {
-	n := tm.RandomNode()
-	if n == nil {
-		return "", fmt.Errorf("Failed to get NodeManager!")
+
+func (tm *TxManager) SendRawTransaction(passwd string, isWait bool, methodName string, args ...interface{}) (result string, err error) {
+	n, err := tm.PickNodeManager()
+	if err != nil {
+		err = fmt.Errorf("[public txManager] get NodeManager failed: %s", err)
+		logger.Error(err)
+		return
 	}
 
 	abiPath := tm.cm.GetABIPath()
 	data, err := pcommon.PackMethodAndArgs(abiPath, methodName, args...)
 	if err != nil {
-		logger.Errorf("Failed to PackMethodAndArgs with %s", err.Error())
-		return "", err
+		err = fmt.Errorf("[public txManager] pack method and args failed: %s", err)
+		logger.Error(err)
+		return
 	}
-	pw := viper.GetString("public.keypass")
 
-	return n.SendRawTransaction(pw, tm.chainId, tm.cm.GetContractAddress(), data, isWait)
-}
-
-func (tm *TxManager) RandomNode() *NodeManager {
-	nmLen := len(tm.nm)
-	if nmLen <= 0 {
-		logger.Errorf("Invalid length of NodeManager: %d", nmLen)
-		return nil
+	result, err = n.SendRawTransaction(passwd, tm.chainId, tm.cm.GetContractAddress(), data, isWait)
+	if err != nil {
+		err = fmt.Errorf("[public txManager] send public transaction failed: %s", err)
+		logger.Error(err)
 	}
-	return tm.nm[rand.Intn(len(tm.nm))]
+	return
 }

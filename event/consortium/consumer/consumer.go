@@ -18,7 +18,7 @@ import (
 	"google.golang.org/grpc"
 )
 
-var consumerLogger = logging.MustGetLogger("eventhub_consumer")
+var consumerLogger = logging.MustGetLogger("consortium_event_consumer")
 
 //EventAdapter is the interface by which a fabric event client registers interested events and
 //receives messages from the fabric event Server
@@ -43,12 +43,14 @@ func (a *DefaultAdapter) Recv(msg *peer.Event) (bool, error) {
 		a.Notify <- o
 		return true, nil
 	}
-	return false, fmt.Errorf("Receive unkown type event: %v", msg)
+	err := fmt.Errorf("[consortium event consumer] receive unkown type event: %v", msg)
+	consumerLogger.Error(err)
+	return false, err
 }
 
 //Disconnected implements consumer.EventAdapter interface for disconnecting
 func (a *DefaultAdapter) Disconnected(err error) {
-	consumerLogger.Errorf("adapter disconnected err:%v", err)
+	consumerLogger.Errorf("[consortium event consumer] adapter disconnected: %s", err)
 }
 
 //EventsClient holds the stream and adapter for consumer to work with
@@ -73,15 +75,17 @@ func NewEventsClient(peerAddress string, regTimeout time.Duration, adapter Event
 	var err error
 	if regTimeout < 100*time.Millisecond {
 		regTimeout = 100 * time.Millisecond
-		err = fmt.Errorf("regTimeout >= 0, setting to 100 msec")
+		err = fmt.Errorf("[consortium event consumer] regTimeout >= 0, setting to 100 msec")
+		consumerLogger.Error(err)
 	} else if regTimeout > 60*time.Second {
 		regTimeout = 60 * time.Second
-		err = fmt.Errorf("regTimeout > 60, setting to 60 sec")
+		err = fmt.Errorf("[consortium event consumer] regTimeout > 60, setting to 60 sec")
+		consumerLogger.Error(err)
 	}
 	return &EventsClient{sync.RWMutex{}, peerAddress, regTimeout, nil, adapter}, err
 }
 
-func (ec *EventsClient) send(emsg *ehpb.Event) error {
+func (ec *EventsClient) send(emsg *ehpb.Event, privateKey string) error {
 	ec.Lock()
 	defer ec.Unlock()
 
@@ -89,46 +93,48 @@ func (ec *EventsClient) send(emsg *ehpb.Event) error {
 	if err != nil {
 		return err
 	}
-
 	emsg.Creator = creator
-
-	signer, err := utils.ReadPrivateKey(viper.GetString("consortium.privateKey"), []byte{})
+	signer, err := utils.ReadPrivateKey(privateKey, []byte{})
 	if err != nil {
-		consumerLogger.Errorf("read private key from path err %v", err)
+		err = fmt.Errorf("[consortium event consumer] read private key from path failed: %s", err)
+		consumerLogger.Error(err)
 		return err
 	}
 
 	signedEvt, err := utils.GetSignedEvent(emsg, signer.(*ecdsa.PrivateKey))
 	if err != nil {
-		consumerLogger.Errorf("could not sign outgoing event,err: %v", err)
-		return fmt.Errorf("could not sign outgoing event, err %s", err)
+		err = fmt.Errorf("[consortium event consumer] sign outgoing event failed: %s", err)
+		consumerLogger.Error(err)
+		return err
 	}
 
 	return ec.stream.Send(signedEvt)
 }
 
 // RegisterAsync - registers interest in a event and doesn't wait for a response
-func (ec *EventsClient) RegisterAsync(config *RegistrationConfig) error {
+func (ec *EventsClient) RegisterAsync(config *RegistrationConfig, privateKey string) error {
 	creator, err := getCreator()
 	if err != nil {
-		return fmt.Errorf("error getting creator from MSP: %s", err)
+		err = fmt.Errorf("[consortium event consumer] get creator from MSP failed: %s", err)
+		consumerLogger.Error(err)
+		return err
 	}
-
 	emsg := &ehpb.Event{Event: &ehpb.Event_Register{Register: &ehpb.Register{Events: config.InterestedEvents}}, Creator: creator, Timestamp: config.Timestamp}
-
 	if config.TlsCert != nil {
 		emsg.TlsCertHash = utils.ComputeSHA256(config.TlsCert.Raw)
 	}
-	if err = ec.send(emsg); err != nil {
-		consumerLogger.Errorf("error on Register send %s\n", err)
+
+	if err = ec.send(emsg, privateKey); err != nil {
+		err = fmt.Errorf("[consortium event consumer] send failed: %s", err)
+		consumerLogger.Error(err)
 	}
 	return err
 }
 
 // register - registers interest in a event
-func (ec *EventsClient) register(config *RegistrationConfig) error {
+func (ec *EventsClient) register(config *RegistrationConfig, privateKey string) error {
 	var err error
-	if err = ec.RegisterAsync(config); err != nil {
+	if err = ec.RegisterAsync(config, privateKey); err != nil {
 		return err
 	}
 
@@ -143,29 +149,35 @@ func (ec *EventsClient) register(config *RegistrationConfig) error {
 		switch in.Event.(type) {
 		case *ehpb.Event_Register:
 		case nil:
-			err = fmt.Errorf("invalid nil object for register")
+			err = fmt.Errorf("[consortium event consumer] invalid nil object for register")
+			consumerLogger.Error(err)
 		default:
-			err = fmt.Errorf("invalid registration object")
+			err = fmt.Errorf("[consortium event consumer] invalid registration object")
+			consumerLogger.Error(err)
 		}
 	}()
 	select {
 	case <-regChan:
 	case <-time.After(ec.regTimeout):
-		err = fmt.Errorf("timeout waiting for registration")
+		err = fmt.Errorf("[consortium event consumer] timeout waiting for registration")
+		consumerLogger.Error(err)
 	}
 	return err
 }
 
 // UnregisterAsync - Unregisters interest in a event and doesn't wait for a response
-func (ec *EventsClient) UnregisterAsync(ies []*ehpb.Interest) error {
+func (ec *EventsClient) UnregisterAsync(ies []*ehpb.Interest, privateKey string) error {
 	creator, err := getCreator()
 	if err != nil {
-		return fmt.Errorf("error getting creator from MSP: %s", err)
+		err = fmt.Errorf("[consortium event consumer] gett creator from MSP failed: %s", err)
+		consumerLogger.Error(err)
+		return err
 	}
 	emsg := &ehpb.Event{Event: &ehpb.Event_Unregister{Unregister: &ehpb.Unregister{Events: ies}}, Creator: creator}
 
-	if err = ec.send(emsg); err != nil {
-		err = fmt.Errorf("error on unregister send %s\n", err)
+	if err = ec.send(emsg, privateKey); err != nil {
+		err = fmt.Errorf("[consortium event consumer] unregister send failed: %s\n", err)
+		consumerLogger.Error(err)
 	}
 
 	return err
@@ -189,6 +201,7 @@ func (ec *EventsClient) Recv() (*ehpb.Event, error) {
 	}
 	return in, nil
 }
+
 func (ec *EventsClient) processEvents() error {
 	defer ec.stream.CloseSend()
 	for {
@@ -216,29 +229,34 @@ func (ec *EventsClient) processEvents() error {
 }
 
 //Start establishes connection with Event hub and registers interested events with it
-func (ec *EventsClient) Start(conn *grpc.ClientConn) error {
-
+func (ec *EventsClient) Start(conn *grpc.ClientConn, privateKey string) error {
 	ies, err := ec.adapter.GetInterestedEvents()
 	if err != nil {
-		return fmt.Errorf("error getting interested events:%s", err)
+		err = fmt.Errorf("[consortium event consumer] getting interested events failed: %s", err)
+		consumerLogger.Error(err)
+		return err
 	}
 
 	if len(ies) == 0 {
-		return fmt.Errorf("must supply interested events")
+		err = fmt.Errorf("[consortium event consumer] must supply interested events")
+		consumerLogger.Error(err)
+		return err
 	}
 
 	serverClient := ehpb.NewEventsClient(conn)
 	ec.stream, err = serverClient.Chat(context.Background())
 	if err != nil {
-		return fmt.Errorf("could not create client conn to %s:%s", ec.peerAddress, err)
-	}
-
-	regConfig := &RegistrationConfig{InterestedEvents: ies, Timestamp: utils.CreateUtcTimestamp()}
-	if err = ec.register(regConfig); err != nil {
+		err = fmt.Errorf("[consortium event consumer] create client conn to %s failed: %s", ec.peerAddress, err)
+		consumerLogger.Error(err)
 		return err
 	}
 
-	consumerLogger.Debugf("the start of connection in event")
+	regConfig := &RegistrationConfig{InterestedEvents: ies, Timestamp: utils.CreateUtcTimestamp()}
+	if err = ec.register(regConfig, privateKey); err != nil {
+		return err
+	}
+
+	consumerLogger.Debugf("[consortium event consumer] the start of connection in event")
 	go ec.processEvents()
 
 	return nil
@@ -256,13 +274,15 @@ func (ec *EventsClient) Stop() error {
 func getCreator() ([]byte, error) {
 	cert, err := utils.ReadCertFile(viper.GetString("consortium.cert"))
 	if err != nil {
-		consumerLogger.Errorf("read cert file from path err %v", err)
+		err = fmt.Errorf("[consortium event consumer] read cert file from path failed: %s", err)
+		consumerLogger.Error(err)
 		return []byte{}, err
 	}
 
 	creator, err := utils.SerializeCert(cert)
 	if err != nil {
-		consumerLogger.Errorf("serialize the cert err %v", err)
+		err = fmt.Errorf("[consortium event consumer] serialize the cert failed: %s", err)
+		consumerLogger.Error(err)
 		return []byte{}, err
 	}
 	return creator, err
