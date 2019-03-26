@@ -8,6 +8,7 @@ import (
 	"github.com/op/go-logging"
 	"github.com/spf13/viper"
 	ethcom "github.com/vntchain/go-vnt/common"
+	"github.com/vntchain/kepler/conf"
 	cevent "github.com/vntchain/kepler/event/consortium"
 	"github.com/vntchain/kepler/protos/common"
 	pb "github.com/vntchain/kepler/protos/peer"
@@ -30,7 +31,7 @@ type TransactionHandler struct {
 	retracer             *retracer
 }
 
-func (th *TransactionHandler) Init(signer interface{}, creator []byte, chaincodeID string, LogCToUser string, Transfered string, RollBack string, cTransfer string) (err error) {
+func (th *TransactionHandler) Init(signer interface{}, creator []byte) (err error) {
 	th.RegisteredTxEvent = make(map[string]chan int)
 	th.RegisteredEventByCId = make(map[string]chan interface{})
 
@@ -49,7 +50,7 @@ func (th *TransactionHandler) Init(signer interface{}, creator []byte, chaincode
 	}
 	go th.retracer.Process()
 
-	th.waitUntilEvent(chaincodeID, LogCToUser, Transfered, RollBack, cTransfer)
+	th.waitUntilEvent()
 	return
 }
 
@@ -161,23 +162,23 @@ func (th *TransactionHandler) UnregisterCId(cid string) {
 	delete(th.RegisteredEventByCId, cid)
 }
 
-func (th *TransactionHandler) waitUntilEvent(chaincodeID string, LogCToUser string, Transfered string, RollBack string, cTransfer string) {
+func (th *TransactionHandler) waitUntilEvent() {
 	go func() {
 		logCToUserChan := make(chan ChaincodeEventInfo, 1)
 		transferedChan := make(chan ChaincodeEventInfo, 1)
 		rollbackChan := make(chan ChaincodeEventInfo, 1)
-		th.retracer.RegisterEventName(LogCToUser, logCToUserChan)
-		th.retracer.RegisterEventName(Transfered, transferedChan)
-		th.retracer.RegisterEventName(RollBack, rollbackChan)
+		th.retracer.RegisterEventName(conf.TheConsortiumConf.Chaincode.LogCToUser, logCToUserChan)
+		th.retracer.RegisterEventName(conf.TheConsortiumConf.Chaincode.Transfered, transferedChan)
+		th.retracer.RegisterEventName(conf.TheConsortiumConf.Chaincode.RollBack, rollbackChan)
 
 		for {
 			select {
 			case event := <-logCToUserChan:
-				if len(chaincodeID) != 0 && event.ChaincodeID == chaincodeID {
+				if len(conf.TheConsortiumConf.Chaincode.Name) != 0 && event.ChaincodeID == conf.TheConsortiumConf.Chaincode.Name {
 					var logCToUser cevent.LogCToUser
 					if err := json.Unmarshal(event.Payload, &logCToUser); err == nil {
 						cc, ok := th.RegisteredEventByCId[logCToUser.TxId]
-						if ok && event.EventName == LogCToUser {
+						if ok && event.EventName == conf.TheConsortiumConf.Chaincode.LogCToUser {
 							logger.Debugf("[consortium sdk] received LogCToUser consortium event: %#v", event)
 							cc <- &logCToUser
 							continue
@@ -187,13 +188,13 @@ func (th *TransactionHandler) waitUntilEvent(chaincodeID string, LogCToUser stri
 			case event := <-transferedChan:
 				var logTransfered cevent.LogTransfered
 				if err := json.Unmarshal(event.Payload, &logTransfered); err == nil {
-					cc, ok := th.RegisteredEventByCId[cTransfer+logTransfered.TxId]
+					cc, ok := th.RegisteredEventByCId[conf.TheConsortiumConf.Chaincode.CTransfer+logTransfered.TxId]
 					if !ok {
 						continue
 					}
-					if event.EventName == Transfered {
+					if event.EventName == conf.TheConsortiumConf.Chaincode.Transfered {
 						cc <- &logTransfered
-					} else if event.EventName == RollBack {
+					} else if event.EventName == conf.TheConsortiumConf.Chaincode.RollBack {
 						if string(event.Payload) == "helloworld" {
 							cc <- 4
 						}
@@ -202,9 +203,9 @@ func (th *TransactionHandler) waitUntilEvent(chaincodeID string, LogCToUser stri
 			}
 		}
 
-		th.retracer.UnRegisterEventName(LogCToUser)
-		th.retracer.UnRegisterEventName(Transfered)
-		th.retracer.UnRegisterEventName(RollBack)
+		th.retracer.UnRegisterEventName(conf.TheConsortiumConf.Chaincode.LogCToUser)
+		th.retracer.UnRegisterEventName(conf.TheConsortiumConf.Chaincode.Transfered)
+		th.retracer.UnRegisterEventName(conf.TheConsortiumConf.Chaincode.RollBack)
 	}()
 	return
 }
@@ -214,9 +215,9 @@ func (th *TransactionHandler) ListenEvent(userToCChan chan ChaincodeEventInfo, L
 }
 
 func (th *TransactionHandler) HandleUserToCEvent(userToC ChaincodeEventInfo,
-	sendRawTransaction func(string, bool, string, ...interface{}) (string, error),
+	sendRawTransaction func(bool, string, ...interface{}) (string, error),
 	getTransactionReceipt func(string) (map[string]interface{}, error),
-	rollback func(ChaincodeEventInfo, ...interface{}), pw string, orgName string, channelName string, chaincodeName string, version string, queryCTransfer string, cTransfer string, queryCApprove string, cApprove string, agreedCount int) {
+	rollback func(ChaincodeEventInfo)) {
 	logUserToC := cevent.GetUserToC(userToC.Payload)
 	methodName := "CTransfer"
 	fTxId := userToC.TxID
@@ -231,7 +232,7 @@ func (th *TransactionHandler) HandleUserToCEvent(userToC ChaincodeEventInfo,
 		if attempt >= AttemptCount {
 			break
 		}
-		if txHash, err = sendRawTransaction(pw, true, methodName, fTxId, receiver, value); err != nil {
+		if txHash, err = sendRawTransaction(true, methodName, fTxId, receiver, value); err != nil {
 			logger.Errorf("[consortium sdk] send CTransfer public tx failed: %s", err)
 			continue
 		} else {
@@ -246,5 +247,5 @@ func (th *TransactionHandler) HandleUserToCEvent(userToC ChaincodeEventInfo,
 	}
 
 	logger.Errorf("[consortium sdk] send CTransfer public tx failed with %d times\n", attempt)
-	rollback(userToC, orgName, channelName, chaincodeName, version, queryCTransfer, cTransfer, queryCApprove, cApprove, agreedCount)
+	rollback(userToC)
 }

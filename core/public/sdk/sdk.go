@@ -97,6 +97,7 @@ func (es *EthSDK) SendRawTransaction(data []byte, isWait bool) (resp pubcom.Hash
 		logger.Error(err)
 		return
 	}
+	logger.Debugf("[Debug] [public sdk] send raw transaction succeed")
 	if isWait {
 		for {
 			var tx interface{}
@@ -107,9 +108,11 @@ func (es *EthSDK) SendRawTransaction(data []byte, isWait bool) (resp pubcom.Hash
 				return
 			}
 			if tx.(map[string]interface{})["blockNumber"] == nil {
+				logger.Warning("[Debug] [public sdk] get transaction response blocknumber is nil")
 				time.Sleep(CheckBlkInterval)
 				continue
 			} else {
+				logger.Debugf("[Debug] [public sdk] get transaction response blocknumber: %v", tx.(map[string]interface{})["blockNumber"])
 				break
 			}
 		}

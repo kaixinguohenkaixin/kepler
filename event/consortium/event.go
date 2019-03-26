@@ -30,7 +30,7 @@ type LogTransfered struct {
 func GetUserToC(payload []byte) *LogUserToC {
 	var logUserToC LogUserToC
 	if err := json.Unmarshal(payload, &logUserToC); err != nil {
-		logger.Errorf("[consortiumevent] unmarshal LogUserToC failed: %s", err)
+		logger.Errorf("[consortium_event] unmarshal LogUserToC failed: %s", err)
 		return nil
 	}
 	return &logUserToC

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
+	"github.com/vntchain/kepler/conf"
 	"github.com/vntchain/kepler/event/consortium/consumer"
 	ab "github.com/vntchain/kepler/protos/orderer"
 	pb "github.com/vntchain/kepler/protos/peer"
@@ -129,24 +130,14 @@ func pemToX509Certs(pemCerts []byte) ([]*x509.Certificate, []string, error) {
 	return certs, subjects, nil
 }
 
-func ConfigFromEnv(env map[interface{}]interface{}) (address, override, eventAddress string, clientConfig ClientConfig, err error) {
-	address = env["address"].(string)
-	override = env["sn"].(string)
-
-	if env["eventAddress"] != nil {
-		eventAddress = env["eventAddress"].(string)
-	} else {
-		eventAddress = ""
-	}
-
+func ResolveTlsConfig(tlsConfig conf.TLSConf) (clientConfig ClientConfig, err error) {
 	clientConfig = ClientConfig{}
-	tls := env["tls"].(map[interface{}]interface{})
 	secOpts := &SecureOptions{
-		UseTLS:            tls["enabled"].(bool),
-		RequireClientCert: tls["clientAuthRequired"].(bool),
+		UseTLS:            tlsConfig.Enabled,
+		RequireClientCert: tlsConfig.ClientAuthRequired,
 	}
 	if secOpts.UseTLS {
-		caPEM, res := ioutil.ReadFile(tls["rootcertFile"].(string))
+		caPEM, res := ioutil.ReadFile(tlsConfig.RootcertFile)
 		if res != nil {
 			err = errors.WithMessage(res,
 				fmt.Sprint("unable to load rootcertFile"))
@@ -155,14 +146,14 @@ func ConfigFromEnv(env map[interface{}]interface{}) (address, override, eventAdd
 		secOpts.ServerRootCAs = [][]byte{caPEM}
 	}
 	if secOpts.RequireClientCert {
-		keyPEM, res := ioutil.ReadFile(env["clientKeyFile"].(string))
+		keyPEM, res := ioutil.ReadFile(tlsConfig.ClientKeyFile)
 		if res != nil {
 			err = errors.WithMessage(res,
 				fmt.Sprint("unable to load clientKeyFile"))
 			return
 		}
 		secOpts.Key = keyPEM
-		certPEM, res := ioutil.ReadFile(env["clientCertFile"].(string))
+		certPEM, res := ioutil.ReadFile(tlsConfig.ClientCertFile)
 		if res != nil {
 			err = errors.WithMessage(res,
 				fmt.Sprint("unable to load tlsClientCertFile"))

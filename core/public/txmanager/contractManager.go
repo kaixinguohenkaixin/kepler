@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/vntchain/go-vnt/accounts/abi"
 	pubcom "github.com/vntchain/go-vnt/common"
+	"github.com/vntchain/kepler/conf"
 	pubevent "github.com/vntchain/kepler/event/public"
 	"io/ioutil"
 	"math/big"
@@ -16,8 +17,8 @@ type ContractManager struct {
 	abiPath         string
 }
 
-func newContractManager(abiPath string, contractAddrStr string) (*ContractManager, error) {
-	abiJson, err := ioutil.ReadFile(abiPath)
+func newContractManager() (*ContractManager, error) {
+	abiJson, err := ioutil.ReadFile(conf.ThePublicConf.Contract.AbiPath)
 	if err != nil {
 		err = fmt.Errorf("[public contractManager] read abi file failed: %s", err)
 		logger.Error(err)
@@ -30,13 +31,13 @@ func newContractManager(abiPath string, contractAddrStr string) (*ContractManage
 		return nil, err
 	}
 
-	logger.Debugf("[public contractManager] contract address: %s", contractAddrStr)
-	contractAddr := pubcom.HexToAddress(contractAddrStr)
+	logger.Debugf("[public contractManager] contract address: %s", conf.ThePublicConf.Contract.Address)
+	contractAddr := pubcom.HexToAddress(conf.ThePublicConf.Contract.Address)
 
 	cm := ContractManager{
 		abiInstance:     abiInstance,
 		contractAddress: contractAddr,
-		abiPath:         abiPath,
+		abiPath:         conf.ThePublicConf.Contract.AbiPath,
 	}
 	return &cm, nil
 }
@@ -49,14 +50,14 @@ func (cm *ContractManager) GetABIPath() string {
 	return cm.abiPath
 }
 
-func (cm *ContractManager) ReadUserToCEvent(eventName string, data []byte, topics []pubcom.Hash, blockNumber uint64, blockHash pubcom.Hash, txHash pubcom.Hash, txIndex uint, removed bool) (*pubevent.LogUserToC, error) {
+func (cm *ContractManager) ReadUserToCEvent(data []byte, topics []pubcom.Hash, blockNumber uint64, blockHash pubcom.Hash, txHash pubcom.Hash, txIndex uint, removed bool) (*pubevent.LogUserToC, error) {
 	type LogUserToC struct {
 		Ac_address string
 		Txid       string
 	}
 	var eventUserToC LogUserToC
 
-	err := cm.abiInstance.Unpack(&eventUserToC, eventName, data)
+	err := cm.abiInstance.Unpack(&eventUserToC, conf.ThePublicConf.Contract.LogUserToC, data)
 	if err != nil {
 		err = fmt.Errorf("[public contractManager] unpack LogUserToC event failed: %s", err)
 		logger.Error(err)

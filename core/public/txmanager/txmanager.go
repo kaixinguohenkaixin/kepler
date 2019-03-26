@@ -5,11 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/op/go-logging"
-	"github.com/vntchain/go-vnt/accounts/keystore"
-	pubcom "github.com/vntchain/go-vnt/common"
+	"github.com/vntchain/kepler/conf"
 	"github.com/vntchain/kepler/core/consortium/endorser"
 	cTxManager "github.com/vntchain/kepler/core/consortium/txmanager"
-	comsdk "github.com/vntchain/kepler/core/public/sdk/common"
+	"github.com/vntchain/kepler/core/public/sdk"
 	pcommon "github.com/vntchain/kepler/core/public/sdk/common"
 	cevent "github.com/vntchain/kepler/event/consortium"
 	pubevent "github.com/vntchain/kepler/event/public"
@@ -37,22 +36,23 @@ type TxManager struct {
 	cm      *ContractManager
 }
 
-func NewPublicTxManager(ks *keystore.KeyStore, keyDir string, chainId int, nodes map[string]interface{}, abiPath string, contractAddress string) (tm *TxManager, err error) {
+func NewPublicTxManager() (tm *TxManager, err error) {
 	var cm *ContractManager
-	cm, err = newContractManager(abiPath, contractAddress)
+	cm, err = newContractManager()
 	if err != nil {
 		err = fmt.Errorf("[public txManager] create contract manager failed: %s", err)
 		logger.Error(err)
 		return
 	}
 	tm = &TxManager{
-		keyDir:  keyDir,
-		chainId: chainId,
+		keyDir:  conf.ThePublicConf.KeyPath,
+		chainId: conf.ThePublicConf.ChainId,
 		cm:      cm,
 		nm:      make([]*NodeManager, 0),
 	}
 
-	for key, node := range nodes {
+	ks := sdk.NewKeyStore(conf.ThePublicConf.KeyPath)
+	for key, node := range conf.ThePublicConf.Nodes {
 		nm, err := newNodeManager(key, node, ks)
 		if err != nil {
 			err = fmt.Errorf("[public txManager] create node [%s] manager failed: %s", key, err)
@@ -64,9 +64,9 @@ func NewPublicTxManager(ks *keystore.KeyStore, keyDir string, chainId int, nodes
 	return
 }
 
-func (tm *TxManager) ListenEvent(userToCChan chan *pubevent.LogUserToC, EventRollback string, EventUserToC string, EventCToUser string, logUserToC string) {
+func (tm *TxManager) ListenEvent(userToCChan chan *pubevent.LogUserToC) {
 	for _, n := range tm.nm {
-		go n.ListenWsEvent(EventRollback, EventUserToC, EventCToUser, logUserToC, tm.cm, userToCChan)
+		go n.ListenWsEvent(tm.cm, userToCChan)
 	}
 }
 
@@ -132,73 +132,25 @@ func (tm *TxManager) WaitUntilDeltaConfirmations(userToC *pubevent.LogUserToC) (
 	return nil
 }
 
-func (tm *TxManager) SendPublicRollback(txidBytes []byte, chainIdInt int, CRollback string, abiPath string, passwd string) error {
-	nm, err := tm.PickNodeManager()
-	if err != nil {
-		err = fmt.Errorf("[public txManager] pick node manger failed: %s", err)
-		logger.Error(err)
-		return err
-	}
-	ethSDK, err := nm.GetEthSDK()
-	if err != nil {
-		err = fmt.Errorf("[public txManager] get public SDK failed: %s", err)
-		logger.Error(err)
-		return err
-	}
-
-	txid := string(txidBytes)
-	input, err := comsdk.PackMethodAndArgs(abiPath, CRollback, txid)
-	if err != nil {
-		err = fmt.Errorf("[public txManager] pack method and args failed: %s", err)
-		logger.Error(err)
-		return err
-	}
-	logger.Debugf("[public txManager] CRollback txid [%s] input: %#v", txid, string(input))
-
-	account := ethSDK.GetAccounts()[0]
-	err = ethSDK.Keystore.Unlock(account, passwd)
-	if err != nil {
-		err = fmt.Errorf("[public txManager] unlock account [%s] failed: %s", account.Address.String(), err)
-		logger.Error(err)
-		return err
-	}
-
-	nonce, err := ethSDK.GetNonce(account.Address)
-	if err != nil {
-		err = fmt.Errorf("[public txManager] get nounce of [%s] failed: %s", account.Address.String(), err)
-		logger.Error(err)
-		return err
-	}
-	chainId := big.NewInt(int64(chainIdInt))
-	gasLimit := uint64(GasLimit)
-	price := big.NewInt(Price)
-	value := big.NewInt(0)
-	to := pubcom.HexToAddress(abiPath)
-	txBytes, err := ethSDK.FormSignedTransaction(&account, chainId, nonce, to, value, gasLimit, price, input)
-	if err != nil {
-		err = fmt.Errorf("[public txManager] form signed transaction failed: %s", err)
-		logger.Error(err)
-		return err
-	}
-
+func (tm *TxManager) SendPublicRollback(txidBytes []byte) (err error) {
 	attempt := 0
 	for ; attempt <= ConfirmedCount; attempt++ {
-		_, err = ethSDK.SendRawTransaction(txBytes, true)
+		_, err = tm.SendRawTransaction(true, conf.ThePublicConf.Contract.CRollback, string(txidBytes))
 		if err == nil {
+			logger.Debug("[Debug] [public txManager] send public rollback transaction succeed")
 			return nil
 		}
-		err = fmt.Errorf("[public txManager] send transaction failed: %s", err)
+		err = fmt.Errorf("[public txManager] send public rollback transaction failed: %s", err)
 		logger.Error(err)
 		time.Sleep(RetryInterval)
 	}
 	if attempt == ConfirmedCount && err != nil {
-		return err
+		return
 	}
-
-	return nil
+	return
 }
 
-func (tm *TxManager) HandleUserToCEvent(userToC *pubevent.LogUserToC, consortiumManager *cTxManager.TxManager, orgName string, channelName string, chaincodeName string, version string, queryCTransfer string, cTransfer string, queryCApprove string, cApprove string, agreedCnt int, queryCRevert string, cRevert string, chainId int, CRollback string, abiPath string, passwd string) {
+func (tm *TxManager) HandleUserToCEvent(userToC *pubevent.LogUserToC, consortiumManager *cTxManager.TxManager) {
 	err := tm.WaitUntilDeltaConfirmations(userToC)
 	if err != nil {
 		err = fmt.Errorf("[public txManager] wait public UerToC event failed: %s", err)
@@ -221,7 +173,7 @@ func (tm *TxManager) HandleUserToCEvent(userToC *pubevent.LogUserToC, consortium
 		if _, ok := agreedOrgs[logCToUser.AgreedOrg]; !ok {
 			agreedOrgs[logCToUser.AgreedOrg] = logCToUser
 		}
-		if len(agreedOrgs) >= agreedCnt {
+		if len(agreedOrgs) >= conf.TheConsortiumConf.AgreedCount {
 			cCallback := func(cdata interface{}) bool {
 				return true
 			}
@@ -233,7 +185,7 @@ func (tm *TxManager) HandleUserToCEvent(userToC *pubevent.LogUserToC, consortium
 				tm := args[1].(*cTxManager.TxManager)
 				txid := args[2].(string)
 
-				prop, txid, err := th.CreateProposal(channelName, chaincodeName, version, queryCTransfer, tm.GetCreator(), txid)
+				prop, txid, err := th.CreateProposal(conf.TheConsortiumConf.ChannelName, conf.TheConsortiumConf.Chaincode.Name, conf.TheConsortiumConf.Chaincode.Version, conf.TheConsortiumConf.Chaincode.QueryCTransfer, tm.GetCreator(), txid)
 				if err != nil {
 					err = fmt.Errorf("[public txManager] create consortium query proposal failed: %s", err)
 					logger.Error(err)
@@ -251,10 +203,16 @@ func (tm *TxManager) HandleUserToCEvent(userToC *pubevent.LogUserToC, consortium
 			cRevert := func(args ...interface{}) {
 				cTh := args[0].(*endorser.TransactionHandler)
 				cTm := args[1].(*cTxManager.TxManager)
-				tm.revert(cTh, cTm, userToC.CTxId, channelName, chaincodeName, version, queryCTransfer, queryCRevert, cRevert, chainId, CRollback, abiPath, passwd)
+				tm.revert(cTh, cTm, userToC.CTxId)
 			}
 
-			go consortiumManager.WaitUntilTransactionSuccess(cCallback, cQuery, cRevert, channelName, chaincodeName, version, cTransfer, cTransfer+txid, txid)
+			go consortiumManager.WaitUntilTransactionSuccess(
+				cCallback,
+				cQuery,
+				cRevert,
+				conf.TheConsortiumConf.Chaincode.CTransfer,
+				conf.TheConsortiumConf.Chaincode.CTransfer+txid,
+				txid)
 			return true
 		}
 		return false
@@ -268,7 +226,13 @@ func (tm *TxManager) HandleUserToCEvent(userToC *pubevent.LogUserToC, consortium
 		tm := args[1].(*cTxManager.TxManager)
 		txid := args[2].(string)
 
-		prop, txid, err := th.CreateProposal(channelName, chaincodeName, version, queryCApprove, tm.GetCreator(), txid)
+		prop, txid, err := th.CreateProposal(
+			conf.TheConsortiumConf.ChannelName,
+			conf.TheConsortiumConf.Chaincode.Name,
+			conf.TheConsortiumConf.Chaincode.Version,
+			conf.TheConsortiumConf.Chaincode.QueryCApprove,
+			tm.GetCreator(),
+			txid)
 		if err != nil {
 			err = fmt.Errorf("[public txManager] create consortium query proposal failed: %s", err)
 			logger.Error(err)
@@ -286,7 +250,7 @@ func (tm *TxManager) HandleUserToCEvent(userToC *pubevent.LogUserToC, consortium
 					logger.Error(err)
 					return false
 				}
-				if _, ok := logCToUsers[orgName]; ok {
+				if _, ok := logCToUsers[conf.TheConsortiumConf.MspId]; ok {
 					return true
 				}
 			}
@@ -297,13 +261,22 @@ func (tm *TxManager) HandleUserToCEvent(userToC *pubevent.LogUserToC, consortium
 	revert := func(args ...interface{}) {
 		cTh := args[0].(*endorser.TransactionHandler)
 		cTm := args[1].(*cTxManager.TxManager)
-		tm.revert(cTh, cTm, userToC.CTxId, channelName, chaincodeName, version, queryCTransfer, queryCRevert, cRevert, chainId, CRollback, abiPath, passwd)
+		tm.revert(cTh, cTm, userToC.CTxId)
 	}
 
-	go consortiumManager.WaitUntilTransactionSuccess(callback, query, revert, channelName, chaincodeName, version, cApprove, txid, txid, fmt.Sprintf("%d", value), acctName, orgName)
+	go consortiumManager.WaitUntilTransactionSuccess(
+		callback,
+		query,
+		revert,
+		conf.TheConsortiumConf.Chaincode.CApprove,
+		txid,
+		txid,
+		fmt.Sprintf("%d", value),
+		acctName,
+		conf.TheConsortiumConf.MspId)
 }
 
-func (tm *TxManager) revert(cTh *endorser.TransactionHandler, cTm *cTxManager.TxManager, txidBytes []byte, channelName string, chaincodeName string, version string, queryCTransfer string, queryCRevert string, cRevert string, chainId int, CRollback string, abiPath string, passwd string) {
+func (tm *TxManager) revert(cTh *endorser.TransactionHandler, cTm *cTxManager.TxManager, txidBytes []byte) {
 	logger.Debugf("[public txManager] revert txid: %s", string(txidBytes))
 	//FIXME: 目前此处简单粗暴的直接查询联盟链节点transfer或revert是否成功，但是存在以下场景
 	/*
@@ -318,7 +291,13 @@ func (tm *TxManager) revert(cTh *endorser.TransactionHandler, cTm *cTxManager.Tx
 	logger.Debugf("[public txManager] revert txid: %s", txid)
 
 	// 查询该交易是否已经成功，如果成功则不回退
-	prop, transId, err := cTh.CreateProposal(channelName, chaincodeName, version, queryCTransfer, cTm.GetCreator(), txid)
+	prop, transId, err := cTh.CreateProposal(
+		conf.TheConsortiumConf.ChannelName,
+		conf.TheConsortiumConf.Chaincode.Name,
+		conf.TheConsortiumConf.Chaincode.Version,
+		conf.TheConsortiumConf.Chaincode.QueryCTransfer,
+		cTm.GetCreator(),
+		txid)
 	if err != nil {
 		err = fmt.Errorf("[public txManager] create consortium [queryCTransfer] proposal failed: %s", err)
 		// FIXME: 有没有更好的办法？
@@ -340,7 +319,13 @@ func (tm *TxManager) revert(cTh *endorser.TransactionHandler, cTm *cTxManager.Tx
 	}
 
 	// 查询该交易是否已经被回退，如果已经回退，则没必要再次回退
-	prop, transId, err = cTh.CreateProposal(channelName, chaincodeName, version, queryCRevert, cTm.GetCreator(), txid)
+	prop, transId, err = cTh.CreateProposal(
+		conf.TheConsortiumConf.ChannelName,
+		conf.TheConsortiumConf.Chaincode.Name,
+		conf.TheConsortiumConf.Chaincode.Version,
+		conf.TheConsortiumConf.Chaincode.QueryCRevert,
+		cTm.GetCreator(),
+		txid)
 	if err != nil {
 		err = fmt.Errorf("[public txManager] create consortium [queryCRevert] proposal failed: %s", err)
 		// FIXME: 有没有更好的办法？
@@ -364,7 +349,16 @@ func (tm *TxManager) revert(cTh *endorser.TransactionHandler, cTm *cTxManager.Tx
 	// 记录该交易的回退信息
 	c := make(chan int, 1)
 	cc := make(chan interface{}, 1)
-	transId, _, err = cTm.SendTransaction(cTh, c, cc, channelName, chaincodeName, version, cRevert, cRevert+txid, txid)
+	transId, _, err = cTm.SendTransaction(
+		cTh,
+		c,
+		cc,
+		conf.TheConsortiumConf.ChannelName,
+		conf.TheConsortiumConf.Chaincode.Name,
+		conf.TheConsortiumConf.Chaincode.Version,
+		conf.TheConsortiumConf.Chaincode.CRevert,
+		conf.TheConsortiumConf.Chaincode.CRevert+txid,
+		txid)
 	if err != nil {
 		err = fmt.Errorf("[public txManager] send [cRevert] transaction failed: %s", err)
 		logger.Error(err)
@@ -372,14 +366,15 @@ func (tm *TxManager) revert(cTh *endorser.TransactionHandler, cTm *cTxManager.Tx
 	}
 	logger.Debugf("[public txManager] record cRevert [txid: %s, transaction txid: %s]", txid, transId)
 
-	if err := tm.SendPublicRollback(txidBytes, chainId, CRollback, abiPath, passwd); err != nil {
+	if err := tm.SendPublicRollback(txidBytes); err != nil {
 		err = fmt.Errorf("[public txManager] send public [Rollback] transaction failed: %s", err)
 		logger.Error(err)
 	}
 	return
 }
 
-func (tm *TxManager) SendRawTransaction(passwd string, isWait bool, methodName string, args ...interface{}) (result string, err error) {
+func (tm *TxManager) SendRawTransaction(isWait bool, methodName string, args ...interface{}) (result string, err error) {
+	logger.Debugf("[Debug] [public txManager] send raw transaction, method: %s, args: %#v", methodName, args)
 	n, err := tm.PickNodeManager()
 	if err != nil {
 		err = fmt.Errorf("[public txManager] get NodeManager failed: %s", err)
@@ -395,7 +390,7 @@ func (tm *TxManager) SendRawTransaction(passwd string, isWait bool, methodName s
 		return
 	}
 
-	result, err = n.SendRawTransaction(passwd, tm.chainId, tm.cm.GetContractAddress(), data, isWait)
+	result, err = n.SendRawTransaction(conf.ThePublicConf.Password, tm.chainId, tm.cm.GetContractAddress(), data, isWait)
 	if err != nil {
 		err = fmt.Errorf("[public txManager] send public transaction failed: %s", err)
 		logger.Error(err)

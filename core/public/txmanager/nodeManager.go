@@ -6,6 +6,7 @@ import (
 	"github.com/vntchain/go-vnt/accounts/keystore"
 	pubcom "github.com/vntchain/go-vnt/common"
 	"github.com/vntchain/go-vnt/core/types"
+	"github.com/vntchain/kepler/conf"
 	"github.com/vntchain/kepler/core/public/sdk"
 	sdkutils "github.com/vntchain/kepler/core/public/sdk/common"
 	pubevent "github.com/vntchain/kepler/event/public"
@@ -27,22 +28,8 @@ type NodeManager struct {
 	ethSDK   *sdk.EthSDK
 }
 
-func newNodeManager(nodeName string, config interface{}, ks *keystore.KeyStore) (nm *NodeManager, err error) {
-	nodeConfig := config.(map[interface{}]interface{})
-	httpUrl, ok := nodeConfig["httpUrl"].(string)
-	if !ok {
-		err = fmt.Errorf("[public nodeManager] resolve node httpUrl [%#v] failed", nodeConfig["httpUrl"])
-		logger.Error(err)
-		return nil, err
-	}
-	wsPath, ok := nodeConfig["wsPath"].(string)
-	if !ok {
-		err = fmt.Errorf("[public nodeManager] resolve node wsPath [%#v] failed", nodeConfig["wsPath"])
-		logger.Error(err)
-		return nil, err
-	}
-	logger.Debugf("[public nodeManager] new node manager httpUrl: [%s], wsPath: [%s] ", httpUrl, wsPath)
-	sdkConfig := sdk.EthConfig{HttpUrl: httpUrl, WsPath: wsPath}
+func newNodeManager(nodeName string, nodeConfig conf.NodeConf, ks *keystore.KeyStore) (nm *NodeManager, err error) {
+	sdkConfig := sdk.EthConfig{HttpUrl: nodeConfig.HttpUrl, WsPath: nodeConfig.WsPath}
 	ethSDK, err := sdk.NewEthSDK(sdkConfig, ks)
 	if err != nil {
 		err = fmt.Errorf("[public nodeManager] new public SDK failed: %s", err)
@@ -71,7 +58,7 @@ func (nm *NodeManager) GetTransactionReceipt(txHash string) (map[string]interfac
 	return nm.ethSDK.GetTransactionReceipt(pubcom.HexToHash(txHash))
 }
 
-func (nm *NodeManager) ListenWsEvent(EventRollback string, EventUserToC string, EventCToUser string, logUserToC string, contractManager *ContractManager, userToCChan chan *pubevent.LogUserToC) {
+func (nm *NodeManager) ListenWsEvent(contractManager *ContractManager, userToCChan chan *pubevent.LogUserToC) {
 	logger.Debugf("[public nodeManager] start listening event")
 
 	contractAddress := contractManager.GetContractAddress()
@@ -103,17 +90,17 @@ func (nm *NodeManager) ListenWsEvent(EventRollback string, EventUserToC string, 
 		eventName := topics[1].Hex()
 		logger.Debugf("[public nodeManager] read event [%s]", eventName)
 
-		if strings.Contains(eventName, EventUserToC) {
-			userToC, err := contractManager.ReadUserToCEvent(logUserToC, data, topics, blockNumber, blockHash, txHash, txIndex, removed)
+		if strings.Contains(eventName, conf.ThePublicConf.Contract.EventUserToC) {
+			userToC, err := contractManager.ReadUserToCEvent(data, topics, blockNumber, blockHash, txHash, txIndex, removed)
 			if err != nil {
 				logger.Errorf("[public nodeManager] ReadUserToCEvent failed: %s", err)
 				continue
 			}
 			logger.Debugf("[public nodeManager] UserToC Event: %#v", userToC)
 			userToCChan <- userToC
-		} else if strings.Contains(eventName, EventRollback) {
+		} else if strings.Contains(eventName, conf.ThePublicConf.Contract.EventRollback) {
 			continue
-		} else if strings.Contains(eventName, EventCToUser) {
+		} else if strings.Contains(eventName, conf.ThePublicConf.Contract.EventCToUser) {
 			continue
 		}
 	}

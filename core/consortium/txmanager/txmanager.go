@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/op/go-logging"
+	"github.com/vntchain/kepler/conf"
 	"github.com/vntchain/kepler/core/consortium/endorser"
 	cevent "github.com/vntchain/kepler/event/consortium"
 	pubevent "github.com/vntchain/kepler/event/public"
@@ -46,16 +47,16 @@ type TxManager struct {
 	ths            []*endorser.TransactionHandler
 }
 
-func NewConsortiumTxManager(peers map[string]interface{}, orderers map[string]interface{}, privateKey string, certStr string, chaincodeID string, LogCToUser string, Transfered string, RollBack string, cTransfer string) (tm *TxManager, err error) {
+func NewConsortiumTxManager() (tm *TxManager, err error) {
 	tm = &TxManager{}
-	for _, p := range peers {
-		addr, sn, eventAddress, clientConfig, err := endorser.ConfigFromEnv(p.(map[interface{}]interface{}))
+	for _, p := range conf.TheConsortiumConf.Peers {
+		clientConfig, err := endorser.ResolveTlsConfig(p.Tls)
 		if err != nil {
-			err = fmt.Errorf("[consortium txmanager] resolve peer config [%#v] failed: %s", p, err)
+			err = fmt.Errorf("[consortium txmanager] resolve peer tls config [%#v] failed: %s", p, err)
 			logger.Error(err)
 			return nil, err
 		}
-		logger.Debugf("[consortium txmanager] peer [addr: %s, event addr: %s]", addr, eventAddress)
+		logger.Debugf("[consortium txmanager] peer [addr: %s, event addr: %s]", p.Address, p.EventAddress)
 		grpcClient, err := endorser.NewGRPCClient(clientConfig)
 		if err != nil {
 			err = fmt.Errorf("[consortium txmanager] create peer grpc client failed: %s", err)
@@ -64,19 +65,19 @@ func NewConsortiumTxManager(peers map[string]interface{}, orderers map[string]in
 		}
 
 		e := &EndorserConfig{
-			Address:      addr,
-			SN:           sn,
-			EventAddress: eventAddress,
+			Address:      p.Address,
+			SN:           p.Sn,
+			EventAddress: p.EventAddress,
 			ClientConfig: clientConfig,
 			GrpcClient:   grpcClient,
 		}
 		tm.endorserConfig = append(tm.endorserConfig, e)
 	}
 
-	for _, o := range orderers {
-		ordererAddress, orderersn, _, ordererConfig, err := endorser.ConfigFromEnv(o.(map[interface{}]interface{}))
+	for _, o := range conf.TheConsortiumConf.Orderers {
+		ordererConfig, err := endorser.ResolveTlsConfig(o.Tls)
 		if err != nil {
-			err = fmt.Errorf("[consortium txmanager] resolve orderer config [%#v] failed: %s", o, err)
+			err = fmt.Errorf("[consortium txmanager] resolve orderer tls config [%#v] failed: %s", o, err)
 			logger.Error(err)
 			return nil, err
 		}
@@ -88,24 +89,24 @@ func NewConsortiumTxManager(peers map[string]interface{}, orderers map[string]in
 		}
 
 		o := &OrdererConfig{
-			OrdererAddress: ordererAddress,
-			OrdererSN:      orderersn,
+			OrdererAddress: o.Address,
+			OrdererSN:      o.Sn,
 			OrdererConfig:  ordererConfig,
 			OrdererClient:  ordererClient,
 		}
 		tm.ordererConfig = append(tm.ordererConfig, o)
 	}
 
-	tm.signer, err = utils.ReadPrivateKey(privateKey, []byte{})
+	tm.signer, err = utils.ReadPrivateKey(conf.TheConsortiumConf.PrivateKeyPath, []byte{})
 	if err != nil {
-		err = fmt.Errorf("[consortium txmanager] read private key from path [%s] failed: %s", privateKey, err)
+		err = fmt.Errorf("[consortium txmanager] read private key from path [%s] failed: %s", conf.TheConsortiumConf.PrivateKeyPath, err)
 		logger.Error(err)
 		return
 	}
 
-	cert, err := utils.ReadCertFile(certStr)
+	cert, err := utils.ReadCertFile(conf.TheConsortiumConf.CertPath)
 	if err != nil {
-		err = fmt.Errorf("[consortium txmanager] read cert file from path [%s] failed: %s", certStr, err)
+		err = fmt.Errorf("[consortium txmanager] read cert file from path [%s] failed: %s", conf.TheConsortiumConf.CertPath, err)
 		logger.Error(err)
 		return
 	}
@@ -116,14 +117,14 @@ func NewConsortiumTxManager(peers map[string]interface{}, orderers map[string]in
 		return
 	}
 
-	tm.initTransactionHandlers(chaincodeID, LogCToUser, Transfered, RollBack, cTransfer)
+	tm.initTransactionHandlers()
 	return
 }
 
-func (tm *TxManager) initTransactionHandlers(chaincodeID string, LogCToUser string, Transfered string, RollBack string, cTransfer string) {
+func (tm *TxManager) initTransactionHandlers() {
 	tm.ths = make([]*endorser.TransactionHandler, 0)
 	for i := 0; i < RandomTransactoinHandlerCount; i++ {
-		th, err := tm.RandomTxHandler(chaincodeID, LogCToUser, Transfered, RollBack, cTransfer)
+		th, err := tm.RandomTxHandler()
 		if err != nil {
 			logger.Errorf("[consortium txmanager] init random tx handler failed: %s", err)
 			continue
@@ -132,7 +133,7 @@ func (tm *TxManager) initTransactionHandlers(chaincodeID string, LogCToUser stri
 	}
 }
 
-func (tm *TxManager) RandomTxHandler(chaincodeID string, LogCToUser string, Transfered string, RollBack string, cTransfer string) (*endorser.TransactionHandler, error) {
+func (tm *TxManager) RandomTxHandler() (*endorser.TransactionHandler, error) {
 	endorserConfig, err := tm.PickEndorserConfig()
 	if err != nil {
 		err := fmt.Errorf("[consortium txmanager] pick endorser config list failed: %s", err)
@@ -155,7 +156,7 @@ func (tm *TxManager) RandomTxHandler(chaincodeID string, LogCToUser string, Tran
 	orderersn := ordererConfig.OrdererSN
 	peerClient := endorser.NewPeerClient(grpcClient, ordererClient, addr, sn, eventAddress, ordererAddress, orderersn)
 	th := &endorser.TransactionHandler{PeerClient: peerClient}
-	err = th.Init(tm.GetSigner(), tm.GetCreator(), chaincodeID, LogCToUser, Transfered, RollBack, cTransfer)
+	err = th.Init(tm.GetSigner(), tm.GetCreator())
 	if err != nil {
 		err = fmt.Errorf("[consortium txmanager] transaction handler init failed: %s", err)
 		logger.Error(err)
@@ -229,7 +230,7 @@ func (tm *TxManager) SendTransaction(th *endorser.TransactionHandler, c chan int
 	return txid, cid, nil
 }
 
-func (tm *TxManager) WaitUntilTransactionSuccess(callback func(logCToUser interface{}) bool, query func(q ...interface{}) bool, revert func(q ...interface{}), chainId, chaincodeName, version, funcName, cid string, args ...string) {
+func (tm *TxManager) WaitUntilTransactionSuccess(callback func(logCToUser interface{}) bool, query func(q ...interface{}) bool, revert func(q ...interface{}), funcName, cid string, args ...string) {
 	th, err := tm.PickRandomTxHandler()
 	if err != nil {
 		err := fmt.Errorf("[consortium txmanager] pick random transaction handler failed: %s", err)
@@ -242,7 +243,16 @@ func (tm *TxManager) WaitUntilTransactionSuccess(callback func(logCToUser interf
 	resendCount := 0
 	for {
 		isBreak := false
-		txid, cid, err := tm.SendTransaction(th, c, cc, chainId, chaincodeName, version, funcName, cid, args...)
+		txid, cid, err := tm.SendTransaction(
+			th,
+			c,
+			cc,
+			conf.TheConsortiumConf.ChannelName,
+			conf.TheConsortiumConf.Chaincode.Name,
+			conf.TheConsortiumConf.Chaincode.Version,
+			funcName,
+			cid,
+			args...)
 		if err != nil {
 			err := fmt.Errorf("[consortium txmanager] send transaction failed: %s", err)
 			logger.Error(err)
@@ -322,21 +332,7 @@ func (tm *TxManager) WaitUntilTransactionSuccess(callback func(logCToUser interf
 	logger.Debugf("[consortium txmanager] exit WaitUntilTransactionSuccess")
 }
 
-func (tm *TxManager) RollBack(userToC endorser.ChaincodeEventInfo, args ...interface{}) {
-	if len(args) <= 9 {
-		err := fmt.Errorf("[consortium txmanager] rollback args length [%s] != [%s]", len(args), 9)
-		logger.Error(err)
-	}
-	orgName := args[0].(string)
-	channelName := args[1].(string)
-	chaincodeName := args[2].(string)
-	version := args[3].(string)
-	queryCTransfer := args[4].(string)
-	cTransfer := args[5].(string)
-	queryCApprove := args[6].(string)
-	cApprove := args[7].(string)
-	agreedCount := args[8].(int)
-
+func (tm *TxManager) RollBack(userToC endorser.ChaincodeEventInfo) {
 	txid := userToC.TxID
 	value := big.NewInt(0)
 	logUserToC := cevent.GetUserToC(userToC.Payload)
@@ -354,7 +350,7 @@ func (tm *TxManager) RollBack(userToC endorser.ChaincodeEventInfo, args ...inter
 		if _, ok := agreedOrgs[logCToUser.AgreedOrg]; !ok {
 			agreedOrgs[logCToUser.AgreedOrg] = logCToUser
 		}
-		if len(agreedOrgs) >= agreedCount {
+		if len(agreedOrgs) >= conf.TheConsortiumConf.AgreedCount {
 			go tm.WaitUntilTransactionSuccess(
 				func(cdata interface{}) bool {
 					return true
@@ -368,7 +364,13 @@ func (tm *TxManager) RollBack(userToC endorser.ChaincodeEventInfo, args ...inter
 					th := args[0].(*endorser.TransactionHandler)
 					tm := args[1].(*TxManager)
 					txid := args[2].(string)
-					prop, txid, err := th.CreateProposal(channelName, chaincodeName, version, queryCTransfer, tm.GetCreator(), txid)
+					prop, txid, err := th.CreateProposal(
+						conf.TheConsortiumConf.ChannelName,
+						conf.TheConsortiumConf.Chaincode.Name,
+						conf.TheConsortiumConf.Chaincode.Version,
+						conf.TheConsortiumConf.Chaincode.QueryCTransfer,
+						tm.GetCreator(),
+						txid)
 					if err != nil {
 						err = fmt.Errorf("[consortium txmanager] create queryTransfer proposal failed: %s", err)
 						logger.Error(err)
@@ -383,7 +385,10 @@ func (tm *TxManager) RollBack(userToC endorser.ChaincodeEventInfo, args ...inter
 					}
 				}, func(args ...interface{}) {
 					logger.Errorf("[consortium txmanager] rollback cTransfer failed")
-				}, channelName, chaincodeName, version, cTransfer, cTransfer+txid, txid)
+				},
+				conf.TheConsortiumConf.Chaincode.CTransfer,
+				conf.TheConsortiumConf.Chaincode.CTransfer+txid,
+				txid)
 
 			return true
 		}
@@ -400,7 +405,13 @@ func (tm *TxManager) RollBack(userToC endorser.ChaincodeEventInfo, args ...inter
 		tm := args[1].(*TxManager)
 		txid := args[2].(string)
 
-		prop, txid, err := th.CreateProposal(channelName, chaincodeName, version, queryCApprove, tm.GetCreator(), txid)
+		prop, txid, err := th.CreateProposal(
+			conf.TheConsortiumConf.ChannelName,
+			conf.TheConsortiumConf.Chaincode.Name,
+			conf.TheConsortiumConf.Chaincode.Version,
+			conf.TheConsortiumConf.Chaincode.QueryCApprove,
+			tm.GetCreator(),
+			txid)
 		if err != nil {
 			err = fmt.Errorf("[consortium txmanager] create queryApprove proposal failed: %s", err)
 			logger.Error(err)
@@ -416,7 +427,7 @@ func (tm *TxManager) RollBack(userToC endorser.ChaincodeEventInfo, args ...inter
 					logger.Error(err)
 					return false
 				}
-				if _, ok := logCToUsers[orgName]; ok {
+				if _, ok := logCToUsers[conf.TheConsortiumConf.MspId]; ok {
 					return true
 				}
 			}
@@ -428,6 +439,14 @@ func (tm *TxManager) RollBack(userToC endorser.ChaincodeEventInfo, args ...inter
 		logger.Errorf("[consortium txmanager] rollback cApprove failed")
 	}
 
-	go tm.WaitUntilTransactionSuccess(cApproveCallback, cApproveQuery, cApproveRevert,
-		channelName, chaincodeName, version, cApprove, txid, txid, fmt.Sprintf("%d", value), logUserToC.AccountF, orgName)
+	go tm.WaitUntilTransactionSuccess(
+		cApproveCallback,
+		cApproveQuery,
+		cApproveRevert,
+		conf.TheConsortiumConf.Chaincode.CApprove,
+		txid,
+		txid,
+		fmt.Sprintf("%d", value),
+		logUserToC.AccountF,
+		conf.TheConsortiumConf.MspId)
 }
