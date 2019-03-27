@@ -5,8 +5,10 @@ import (
 	"crypto/ecdsa"
 	"encoding/json"
 	"fmt"
+	"github.com/op/go-logging"
 	"github.com/spf13/viper"
 	ethcom "github.com/vntchain/go-vnt/common"
+	"github.com/vntchain/kepler/conf"
 	cevent "github.com/vntchain/kepler/event/consortium"
 	"github.com/vntchain/kepler/protos/common"
 	pb "github.com/vntchain/kepler/protos/peer"
@@ -16,8 +18,11 @@ import (
 )
 
 const (
-	AttemptCount = 3
+	AttemptCount    = 3
+	RetraceInterval = 3 * time.Second
 )
+
+var logger = logging.MustGetLogger("consortium_sdk")
 
 type TransactionHandler struct {
 	PeerClient           *PeerClient
@@ -26,104 +31,115 @@ type TransactionHandler struct {
 	retracer             *retracer
 }
 
-func (th *TransactionHandler) Init(signer interface{}, creator []byte) error {
+func (th *TransactionHandler) Init(signer interface{}, creator []byte) (err error) {
 	th.RegisteredTxEvent = make(map[string]chan int)
 	th.RegisteredEventByCId = make(map[string]chan interface{})
 
 	config := RetraceConf{
 		PeerClient:      th.PeerClient,
 		Channel:         viper.GetString("consortium.channelName"),
-		RetraceInterval: 3 * time.Second,
+		RetraceInterval: RetraceInterval,
 		Signer:          signer,
 		Creator:         creator,
 	}
-
-	logger.Errorf("the retracer init and it will process")
-	th.retracer = InitRetracer(config)
+	th.retracer, err = InitRetracer(config)
+	if err != nil {
+		err = fmt.Errorf("[consortium sdk] init retracer falied: %s", err)
+		logger.Error(err)
+		return
+	}
 	go th.retracer.Process()
 
-	return th.waitUntilEvent()
+	th.waitUntilEvent()
+	return
 }
 
 func (th *TransactionHandler) CreateProposal(chainId string, chaincodeName string, chaincodeVersion string, funcName string, creator []byte, args ...string) (*pb.Proposal, string, error) {
 	spec, err := utils.GetChaincodeSpecification(chaincodeName, chaincodeVersion, funcName, args...)
 	if err != nil {
+		err = fmt.Errorf("[consortium sdk] get chaincode specification falied: %s", err)
+		logger.Error(err)
 		return nil, "", err
 	}
 
-	//打包交易
 	invocation := &pb.ChaincodeInvocationSpec{ChaincodeSpec: spec}
-
-	var prop *pb.Proposal
 	prop, txid, err := utils.CreateProposalFromCIS(common.HeaderType_ENDORSER_TRANSACTION, chainId, invocation, creator)
-
 	if err != nil {
-		return nil, "", fmt.Errorf("Error creating proposal  %s: %s", funcName, err)
+		err = fmt.Errorf("[consortium sdk] create proposal falied: %s", err)
+		logger.Error(err)
+		return nil, "", err
 	}
-	logger.Debugf("create proposal success txid:%s", txid)
-
+	logger.Debugf("[consortium sdk] create proposal success [txid: %s]", txid)
 	return prop, txid, nil
 }
 
 func (th *TransactionHandler) CreateProposalWithTxGenerator(chainId string, chaincodeName string, chaincodeVersion string, funcName string, creator []byte, generator []byte, args ...string) (*pb.Proposal, string, error) {
 	spec, err := utils.GetChaincodeSpecification(chaincodeName, chaincodeVersion, funcName, args...)
 	if err != nil {
+		err = fmt.Errorf("[consortium sdk] get chaincode specification falied: %s", err)
+		logger.Error(err)
 		return nil, "", err
 	}
 
-	//打包交易
 	invocation := &pb.ChaincodeInvocationSpec{ChaincodeSpec: spec}
-
-	var prop *pb.Proposal
 	prop, txid, err := utils.CreateChaincodeProposalWithTxIDGeneratorAndTransient(common.HeaderType_ENDORSER_TRANSACTION, chainId, invocation, creator, generator, nil)
-
 	if err != nil {
-		return nil, "", fmt.Errorf("Error creating proposal  %s: %s", funcName, err)
+		err = fmt.Errorf("[consortium sdk] create proposal falied: %s", err)
+		logger.Error(err)
+		return nil, "", err
 	}
-	logger.Debugf("create proposal success txid:%s", txid)
-
+	logger.Debugf("[consortium sdk] create proposal success [txid: %s]", txid)
 	return prop, txid, nil
 }
 
 func (th *TransactionHandler) ProcessProposal(signer *ecdsa.PrivateKey, prop *pb.Proposal) (*pb.ProposalResponse, error) {
-	endorserClient, err := th.PeerClient.Endorser() //短连接，所以不需要保存
+	endorserClient, err := th.PeerClient.Endorser()
 	if err != nil {
+		err = fmt.Errorf("[consortium sdk] get endorser client falied: %s", err)
+		logger.Error(err)
 		return nil, err
-
 	}
 
-	var signedProp *pb.SignedProposal
-	signedProp, err = utils.GetSignedProposal(prop, signer)
+	signedProp, err := utils.GetSignedProposal(prop, signer)
 	if err != nil {
-		return nil, fmt.Errorf("Error creating signed proposal %s", err)
+		err = fmt.Errorf("[consortium sdk] get signed proposal falied: %s", err)
+		logger.Error(err)
+		return nil, err
 	}
-
-	//返回交易结果
 	proposalResp, err := endorserClient.ProcessProposal(context.Background(), signedProp)
-	return proposalResp, err
+	if err != nil {
+		err = fmt.Errorf("[consortium sdk] process proposal falied: %s", err)
+		logger.Error(err)
+		return nil, err
+	}
+	return proposalResp, nil
 }
 
 func (th *TransactionHandler) SendTransaction(prop *pb.Proposal, signer *ecdsa.PrivateKey, creator []byte, proposalResp *pb.ProposalResponse) error {
-	if proposalResp != nil {
-		// assemble a signed transaction (it's an Envelope message)
-		env, err := utils.CreateSignedTx(prop, signer, creator, proposalResp)
-		if err != nil {
-			return fmt.Errorf("Could not assemble transaction, err %s", err)
-		}
-
-		// send the envelope for ordering
-		broadcast, err := th.PeerClient.Broadcast()
-		if err != nil {
-			return fmt.Errorf("Error of get broadcast handler err %s", err)
-		}
-
-		if err = broadcast.Send(env); err != nil {
-			return fmt.Errorf("Error sending transaction %s", err)
-		}
-		logger.Debugf("sendTransaction finish")
-		return nil
+	if proposalResp == nil {
+		err := fmt.Errorf("[consortium sdk] response is nil")
+		logger.Error(err)
+		return err
 	}
-	return fmt.Errorf("proposeResponse is nil")
+
+	env, err := utils.CreateSignedTx(prop, signer, creator, proposalResp)
+	if err != nil {
+		err = fmt.Errorf("[consortium sdk] create signed transaction falied: %s", err)
+		logger.Error(err)
+		return err
+	}
+	broadcast, err := th.PeerClient.Broadcast()
+	if err != nil {
+		err = fmt.Errorf("[consortium sdk] get broadcast client falied: %s", err)
+		logger.Error(err)
+		return err
+	}
+	if err = broadcast.Send(env); err != nil {
+		err = fmt.Errorf("[consortium sdk] broadcast send falied: %s", err)
+		logger.Error(err)
+		return err
+	}
+	return nil
 }
 
 /*
@@ -134,201 +150,102 @@ func (th *TransactionHandler) SendTransaction(prop *pb.Proposal, signer *ecdsa.P
 	c=5 回滚成功
 */
 func (th *TransactionHandler) RegisterTxId(txid string, c chan int, cid string, cc chan interface{}) {
-	// th.RegisteredTxEvent[txid] = c
 	th.retracer.RegisterTxId(txid, c)
 	th.RegisteredEventByCId[cid] = cc
 }
 
 func (th *TransactionHandler) UnregisterTxId(txid string) {
-	// delete(th.RegisteredTxEvent,txid)
 	th.retracer.UnRegisterTxId(txid)
-
 }
 
 func (th *TransactionHandler) UnregisterCId(cid string) {
-	// delete(th.RegisteredTxEvent,txid)
 	delete(th.RegisteredEventByCId, cid)
-	logger.Debugf("this is unregistertxid ...,cid:%s", cid)
 }
 
-func getTxPayload(tdata []byte) (*common.Payload, error) {
-	if tdata == nil {
-		return nil, fmt.Errorf("Cannot extract payload from nil transaction")
-	}
-
-	if env, err := utils.GetEnvelopeFromBlock(tdata); err != nil {
-		return nil, fmt.Errorf("Error getting tx from block(%s)", err)
-	} else if env != nil {
-		// get the payload from the envelope
-		payload, err := utils.GetPayload(env)
-		if err != nil {
-			return nil, fmt.Errorf("Could not extract payload from envelope, err %s", err)
-		}
-		return payload, nil
-	}
-	return nil, nil
-}
-
-// getChainCodeEvents parses block events for chaincode events associated with individual transactions
-func getChainCodeEvents(tdata []byte) (*pb.ChaincodeEvent, error) {
-	if tdata == nil {
-		return nil, fmt.Errorf("Cannot extract payload from nil transaction")
-	}
-
-	if env, err := utils.GetEnvelopeFromBlock(tdata); err != nil {
-		return nil, fmt.Errorf("Error getting tx from block(%s)", err)
-	} else if env != nil {
-		// get the payload from the envelope
-		payload, err := utils.GetPayload(env)
-		if err != nil {
-			return nil, fmt.Errorf("Could not extract payload from envelope, err %s", err)
-		}
-
-		chdr, err := utils.UnmarshalChannelHeader(payload.Header.ChannelHeader)
-		if err != nil {
-			return nil, fmt.Errorf("Could not extract channel header from envelope, err %s", err)
-		}
-
-		if common.HeaderType(chdr.Type) == common.HeaderType_ENDORSER_TRANSACTION {
-			tx, err := utils.GetTransaction(payload.Data)
-			if err != nil {
-				return nil, fmt.Errorf("Error unmarshalling transaction payload for block event: %s", err)
-			}
-			chaincodeActionPayload, err := utils.GetChaincodeActionPayload(tx.Actions[0].Payload)
-			if err != nil {
-				return nil, fmt.Errorf("Error unmarshalling transaction action payload for block event: %s", err)
-			}
-			propRespPayload, err := utils.GetProposalResponsePayload(chaincodeActionPayload.Action.ProposalResponsePayload)
-			if err != nil {
-				return nil, fmt.Errorf("Error unmarshalling proposal response payload for block event: %s", err)
-			}
-			caPayload, err := utils.GetChaincodeAction(propRespPayload.Extension)
-			if err != nil {
-				return nil, fmt.Errorf("Error unmarshalling chaincode action for block event: %s", err)
-			}
-			ccEvent, err := utils.GetChaincodeEvents(caPayload.Events)
-
-			if ccEvent != nil {
-				return ccEvent, nil
-			}
-		}
-	}
-	return nil, fmt.Errorf("No events found")
-}
-
-func (th *TransactionHandler) waitUntilEvent() error {
-
-	logger.Debugf("in waitUntilEvent...")
+func (th *TransactionHandler) waitUntilEvent() {
 	go func() {
-		chaincodeID := viper.GetString("consortium.chaincodeName")
 		logCToUserChan := make(chan ChaincodeEventInfo, 1)
 		transferedChan := make(chan ChaincodeEventInfo, 1)
 		rollbackChan := make(chan ChaincodeEventInfo, 1)
-
-		LogCToUser := viper.GetString("consortium.LogCToUser")
-		Transfered := viper.GetString("consortium.Transfered")
-		RollBack := viper.GetString("consortium.RollBack")
-		cTransfer := viper.GetString("consortium.cTransfer")
-
-		th.retracer.RegisterEventName(LogCToUser, logCToUserChan)
-		th.retracer.RegisterEventName(Transfered, transferedChan)
-		th.retracer.RegisterEventName(RollBack, rollbackChan)
+		th.retracer.RegisterEventName(conf.TheConsortiumConf.Chaincode.LogCToUser, logCToUserChan)
+		th.retracer.RegisterEventName(conf.TheConsortiumConf.Chaincode.Transfered, transferedChan)
+		th.retracer.RegisterEventName(conf.TheConsortiumConf.Chaincode.RollBack, rollbackChan)
 
 		for {
 			select {
 			case event := <-logCToUserChan:
-				if len(chaincodeID) != 0 && event.ChaincodeID == chaincodeID {
+				if len(conf.TheConsortiumConf.Chaincode.Name) != 0 && event.ChaincodeID == conf.TheConsortiumConf.Chaincode.Name {
 					var logCToUser cevent.LogCToUser
 					if err := json.Unmarshal(event.Payload, &logCToUser); err == nil {
-						logger.Infof("the logCToUser is %v", logCToUser)
 						cc, ok := th.RegisteredEventByCId[logCToUser.TxId]
-						if ok {
-							if event.EventName == LogCToUser {
-								//成功发送
-								//cc=3 所有节点发送成功，整体事件成功
-								logger.Infof("I have received an event from consortium chain %v", event)
-								cc <- &logCToUser
-								continue
-							}
+						if ok && event.EventName == conf.TheConsortiumConf.Chaincode.LogCToUser {
+							logger.Debugf("[consortium sdk] received LogCToUser consortium event: %#v", event)
+							cc <- &logCToUser
+							continue
 						}
 					}
 				}
 			case event := <-transferedChan:
-
 				var logTransfered cevent.LogTransfered
 				if err := json.Unmarshal(event.Payload, &logTransfered); err == nil {
-					cc, ok := th.RegisteredEventByCId[cTransfer+logTransfered.TxId]
+					cc, ok := th.RegisteredEventByCId[conf.TheConsortiumConf.Chaincode.CTransfer+logTransfered.TxId]
 					if !ok {
 						continue
 					}
-					if event.EventName == Transfered {
+					if event.EventName == conf.TheConsortiumConf.Chaincode.Transfered {
 						cc <- &logTransfered
-					} else if event.EventName == RollBack {
+					} else if event.EventName == conf.TheConsortiumConf.Chaincode.RollBack {
 						if string(event.Payload) == "helloworld" {
-							//成功回滚
-							//cc=4 回滚
 							cc <- 4
 						}
 					}
 				}
-
 			}
 		}
 
-		th.retracer.UnRegisterEventName(LogCToUser)
-		th.retracer.UnRegisterEventName(Transfered)
-		th.retracer.UnRegisterEventName(RollBack)
-
+		th.retracer.UnRegisterEventName(conf.TheConsortiumConf.Chaincode.LogCToUser)
+		th.retracer.UnRegisterEventName(conf.TheConsortiumConf.Chaincode.Transfered)
+		th.retracer.UnRegisterEventName(conf.TheConsortiumConf.Chaincode.RollBack)
 	}()
-
-	return nil
+	return
 }
 
-func (th *TransactionHandler) ListenEvent(userToCChan chan ChaincodeEventInfo) {
-	LogUserToC := viper.GetString("consortium.LogUserToC")
+func (th *TransactionHandler) ListenEvent(userToCChan chan ChaincodeEventInfo, LogUserToC string) {
 	th.retracer.RegisterEventName(LogUserToC, userToCChan)
-	logger.Debugf("RegisterEventName %s\n", LogUserToC)
 }
 
 func (th *TransactionHandler) HandleUserToCEvent(userToC ChaincodeEventInfo,
 	sendRawTransaction func(bool, string, ...interface{}) (string, error),
 	getTransactionReceipt func(string) (map[string]interface{}, error),
 	rollback func(ChaincodeEventInfo)) {
-
-	logger.Debugf("the userToC is %v", userToC)
 	logUserToC := cevent.GetUserToC(userToC.Payload)
-
-	//开始向公链发送交易，并监听，若发送失败，则回退该交易
 	methodName := "CTransfer"
 	fTxId := userToC.TxID
 	receiver := ethcom.HexToAddress(logUserToC.AccountE)
 	value := new(big.Int)
 	value.SetString(logUserToC.Value, 10)
 
-	attempt := 0
 	var txHash string
 	var err error
+	attempt := 0
 	for {
 		if attempt >= AttemptCount {
 			break
 		}
 		if txHash, err = sendRawTransaction(true, methodName, fTxId, receiver, value); err != nil {
-			logger.Errorf("Failed to send CTransfer to public with %s\n", err.Error())
+			logger.Errorf("[consortium sdk] send CTransfer public tx failed: %s", err)
 			continue
 		} else {
-			//txManager.WaitUntilDeltaConfirmations() // 以太坊需要等几个块以确认交易，VNT则不用
 			if receipt, err := getTransactionReceipt(txHash); err == nil {
-				if receipt["status"].(string) == "0x1" { // 本节点CTransfer调用成功
-					logger.Debugf("Successfully send CTransfer to public.\n")
-					// CToUser检查
+				if receipt["status"].(string) == "0x1" {
+					logger.Debug("[consortium sdk] send CTransfer public tx succeed")
 					return
 				}
 			}
 		}
-		attempt += 1
+		attempt++
 	}
-	//FAILURE:
-	// 交易失败回滚
-	logger.Errorf("Failed to send CTransfer to public with %d times\n", attempt)
+
+	logger.Errorf("[consortium sdk] send CTransfer public tx failed with %d times\n", attempt)
 	rollback(userToC)
 }

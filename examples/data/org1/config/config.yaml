@@ -5,73 +5,58 @@
 #                                                                             #
 ###############################################################################
 logging:
-    level: info
-
+    level: debug
 
 ###############################################################################
 #                                                                             #
-#                          consortium chanin section                          #
+#                          consortium chain section                           #
 #                                                                             #
 ###############################################################################
 consortium:
-    #后面这里应该以链节点的形式组织起来
-    #chain1:
-    #   crypto:
-    #   策略需要哪几个peer配合
-    #   peers
-    #       peer1:
-    #       peer2:
-    #       peer3:
-    #   orderers:
-    #
-    #
     crypto:
         hash: sha256
         security: 256
-    privateKey: "/opt/gopath/src/github.com/vntchain/kepler/config/consortium/key"
-    cert: "/opt/gopath/src/github.com/vntchain/kepler/config/consortium/cert"
-    mspId: "Org1MSP"
-    channelName: "mychannel"
-    chaincodeName: "kscc"
-    version: "1.0"
-    queryCTransfer: "queryCTransfer"
-    queryCRevert: "queryCRevert"
-    cRevert: "cRevert"
-    cTransfer: "cTransfer"
-    queryCApprove: "queryCApprove"
-    cApprove: "cApprove"
-    LogCToUser: "LogCToUser"
-    Transfered: "Transfered"
-    RollBack: "RollBack"
-    LogUserToC: "LogUserToC"
+    privateKeyPath: /opt/gopath/src/github.com/vntchain/kepler/config/consortium/key
+    certPath: /opt/gopath/src/github.com/vntchain/kepler/config/consortium/cert
+    mspId: Org1MSP
 
+    channelName: mychannel
+    chaincode:
+        name: kscc
+        version: "1.0"
+        cTransfer: cTransfer
+        queryCTransfer: queryCTransfer
+        cRevert: cRevert
+        queryCRevert: queryCRevert
+        cApprove: cApprove
+        queryCApprove: queryCApprove
+        logCToUser: LogCToUser
+        logUserToC: LogUserToC
+        transfered: Transfered
+        rollBack: RollBack
 
     agreedCount: 2
     peers: 
         peer1:
-            address: "192.168.9.33:7051"
+            address: 192.168.9.33:7051
             sn: ""
-            eventAddress: "192.168.9.33:7053"
+            eventAddress: 192.168.9.33:7053
             tls:
                 enabled: false
                 clientAuthRequired: false
-
-                clientKeyFile: "client.key"
-                clientCertFile: "client.cer"
-
-                rootcertFile: "root.cer"
+                clientKeyFile: client.key
+                clientCertFile: client.cer
+                rootcertFile: root.cer
     orderers:
         orderer1:
-            address: "192.168.9.33:8050"
+            address: 192.168.9.33:8050
             sn: ""
             tls:
                 enabled: false
                 clientAuthRequired: false
-
-                clientKeyFile: "client.key"
-                clientCertFile: "client.cer"
-
-                rootcertFile: "root.cer"
+                clientKeyFile: client.key
+                clientCertFile: client.cer
+                rootcertFile: root.cer
 
 ###############################################################################
 #                                                                             #
@@ -80,17 +65,19 @@ consortium:
 ###############################################################################
 public:
     chainId: 1012
+    keyPath: /opt/gopath/src/github.com/vntchain/kepler/config/public/key
+    password: "123456"
+
     contract:
-        address: "0x63d47aa2cf649a22c1db5600c564b14d19b8a513"
-        abi: "/opt/gopath/src/github.com/vntchain/kepler/config/public/abi/multi_sign.json"
-    keyDir: "/opt/gopath/src/github.com/vntchain/kepler/config/public/key"
-    keypass: 123456
-    LogUserToC: "LogUserToC"
-    EventRollback: "0xb0877a"
-    EventUserToC: "0x000000000000000000000000000000000000000000004c6f6755736572546f43"
-    EventCToUser: "0x000000000000000000000000000000000000000000004c6f6743546f55736572"
-    CRollback: "CRollback"
+        address: "0x0410867af739af88e6db5e95d10e1685cd3ddcd5"
+        abiPath: /opt/gopath/src/github.com/vntchain/kepler/config/public/abi/abi.json
+        eventUserToC: "0x000000000000000000000000000000000000000000004c6f6755736572546f43"
+        eventCToUser: "0x000000000000000000000000000000000000000000004c6f6743546f55736572"
+        eventRollback: "0xb0877a"
+        logUserToC: LogUserToC
+        cRollback: CRollback
+
     nodes:
         node1:
-            httpUrl: "http://192.168.9.33:8545"
-            wsPath: "ws://192.168.9.33:8546"
+            httpUrl: http://192.168.9.33:8545
+            wsPath: ws://192.168.9.33:8546

@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	ABIPath = "src/github.com/vntchain/kepler/config/public/abi/multi_sign.json"
+	ABIPath = "src/github.com/vntchain/kepler/config/public/abi/abi.json"
 )
 
 func getGOPATH() string {

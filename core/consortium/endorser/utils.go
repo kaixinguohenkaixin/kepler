@@ -21,30 +21,34 @@ type ChaincodeEventInfo struct {
 }
 
 func GetHeight(peerClient *PeerClient, channel string, creator []byte, signer *ecdsa.PrivateKey) (uint64, error) {
-	var height uint64
-
 	cbi, err := GetChainInfo(peerClient, channel, creator, signer)
 	if err != nil {
-		logger.Errorf("Failed to GetChainInfo with %s.", err.Error())
-		return height, err
+		err = fmt.Errorf("[consortium sdk] get chain info failed: %s", err)
+		logger.Error(err)
+		return 0, err
 	}
-	logger.Debugf("Current height of %s: %d.\n", channel, cbi.GetHeight())
 	return cbi.GetHeight(), nil
 }
 
 func GetChainInfo(peerClient *PeerClient, channel string, creator []byte, signer *ecdsa.PrivateKey) (*common.BlockchainInfo, error) {
 	signedProp, err := BuildGetChainInfoProposal(creator, signer, channel)
 	if err != nil {
-		return nil, fmt.Errorf("[GetChainInfo] Build getChaininfo proposal error: %s", err)
+		err = fmt.Errorf("[consortium sdk] build getChaininfo proposal failed: %s", err)
+		logger.Error(err)
+		return nil, err
 	}
 	endorserClient, _ := peerClient.Endorser()
 	resp, err := endorserClient.ProcessProposal(context.Background(), signedProp)
 	if err != nil {
-		return nil, fmt.Errorf("[GetChainInfo] Send proposal error: %s", err)
+		err = fmt.Errorf("[consortium sdk] send proposal failed: %s", err)
+		logger.Error(err)
+		return nil, err
 	}
 	chainInfo, err := UnmarshalChainInfoFromProposalResponse(resp)
 	if err != nil {
-		return nil, fmt.Errorf("[GetChainInfo] Unmarshal chain info from proposal response error: %s", err)
+		err = fmt.Errorf("[consortium sdk] unmarshal chain info from proposal response failed: %s", err)
+		logger.Error(err)
+		return nil, err
 	}
 	return chainInfo, nil
 }
@@ -52,16 +56,22 @@ func GetChainInfo(peerClient *PeerClient, channel string, creator []byte, signer
 func GetBlockByNumber(peerClient *PeerClient, channel string, number uint64, creator []byte, signer *ecdsa.PrivateKey) (*common.Block, error) {
 	signedProp, err := BuildGetBlockByNumberProposal(creator, signer, channel, number)
 	if err != nil {
-		return nil, fmt.Errorf("[GetBlockByNumber] Build getBlockByNumber proposal error: %s", err)
+		err = fmt.Errorf("[consortium sdk] build getBlockByNumber proposal failed: %s", err)
+		logger.Error(err)
+		return nil, err
 	}
 	endorserClient, _ := peerClient.Endorser()
 	resp, err := endorserClient.ProcessProposal(context.Background(), signedProp)
 	if err != nil {
-		return nil, fmt.Errorf("[GetBlockByNumber] Send proposal error: %s", err)
+		err = fmt.Errorf("[consortium sdk] process proposal failed: %s", err)
+		logger.Error(err)
+		return nil, err
 	}
 	block, err := UnmarshalBlockFromProposalResponse(resp)
 	if err != nil {
-		return nil, fmt.Errorf("[GetBlockByNumber] Unmarshal block from proposal response error: %s", err)
+		err = fmt.Errorf("[consortium sdk] unmarshal block from proposal response failed: %s", err)
+		logger.Error(err)
+		return nil, err
 	}
 	return block, nil
 }
@@ -93,13 +103,16 @@ func buildQsccProposal(creator []byte, signer *ecdsa.PrivateKey, fcn, channel st
 
 	prop, _, err := utils.CreateProposalFromCIS(common.HeaderType_ENDORSER_TRANSACTION, "", invocation, creator)
 	if err != nil {
-		logger.Errorf("Error creating qscc proposal : %s", err)
+		err = fmt.Errorf("[consortium sdk] create proposal failed: %s", err)
+		logger.Error(err)
 		return nil, err
 	}
 
 	signedProp, err := utils.GetSignedProposal(prop, signer)
 	if err != nil {
-		return nil, fmt.Errorf("Error creating signed proposal %s", err)
+		err = fmt.Errorf("[consortium sdk] create signed proposal failed: %s", err)
+		logger.Error(err)
+		return nil, err
 	}
 	return signedProp, nil
 }
@@ -128,22 +141,34 @@ func getChaincodeEvent(payloadData []byte, channelHeader *common.ChannelHeader) 
 	if common.HeaderType(channelHeader.Type) == common.HeaderType_ENDORSER_TRANSACTION {
 		tx, err := utils.GetTransaction(payloadData)
 		if err != nil {
-			return nil, "", fmt.Errorf("unmarshal transaction payload: %s", err)
+			err = fmt.Errorf("[consortium sdk] unmarshal transaction payload failed: %s", err)
+			logger.Error(err)
+			return nil, "", err
 		}
 		chaincodeActionPayload, err := utils.GetChaincodeActionPayload(tx.Actions[0].Payload)
 		if err != nil {
-			return nil, "", fmt.Errorf("chaincode action payload retrieval failed: %s", err)
+			err = fmt.Errorf("[consortium sdk] get chaincode action payload failed: %s", err)
+			logger.Error(err)
+			return nil, "", err
 		}
 		propRespPayload, err := utils.GetProposalResponsePayload(chaincodeActionPayload.Action.ProposalResponsePayload)
 		if err != nil {
-			return nil, "", fmt.Errorf("proposal response payload retrieval failed: %s", err)
+			err = fmt.Errorf("[consortium sdk] get proposal response failed: %s", err)
+			logger.Error(err)
+			return nil, "", err
 		}
 		caPayload, err := utils.GetChaincodeAction(propRespPayload.Extension)
 		if err != nil {
-			return nil, "", fmt.Errorf("chaincode action retrieval failed: %s", err)
+			err = fmt.Errorf("[consortium sdk] get chaincode action failed: %s", err)
+			logger.Error(err)
+			return nil, "", err
 		}
 		ccEvent, err := utils.GetChaincodeEvents(caPayload.Events)
-
+		if err != nil {
+			err = fmt.Errorf("[consortium sdk] get chaincode event failed: %s", err)
+			logger.Error(err)
+			return nil, "", err
+		}
 		if ccEvent != nil {
 			return ccEvent, channelHeader.ChannelId, nil
 		}

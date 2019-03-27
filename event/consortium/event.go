@@ -5,7 +5,7 @@ import (
 	"github.com/op/go-logging"
 )
 
-var logger = logging.MustGetLogger("kepler/event/consortium")
+var logger = logging.MustGetLogger("consortium_event")
 
 type LogUserToC struct {
 	AccountF string
@@ -30,7 +30,7 @@ type LogTransfered struct {
 func GetUserToC(payload []byte) *LogUserToC {
 	var logUserToC LogUserToC
 	if err := json.Unmarshal(payload, &logUserToC); err != nil {
-		logger.Errorf("Failed to unmarshal LogUserToC with %s", err.Error())
+		logger.Errorf("[consortium_event] unmarshal LogUserToC failed: %s", err)
 		return nil
 	}
 	return &logUserToC
