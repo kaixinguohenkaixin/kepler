@@ -66,5 +66,4 @@ func TestReadUserToCEvent(t *testing.T) {
 	assert.Equal(t, nil, err, "ReadUserToCEvent error: %s", err)
 	assert.NotEqual(t, nil, userToC, "ReadUserToCEvent return nil")
 	t.Logf("UserToC Event: %#v\n", *userToC)
-
 }

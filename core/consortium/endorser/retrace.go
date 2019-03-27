@@ -99,7 +99,7 @@ func (rt *retracer) Process() {
 			}
 		}
 		rt.updateStatus(height)
-		rt.SyncToFile()
+		rt.syncToFile()
 	}
 }
 
@@ -109,7 +109,7 @@ func (rt *retracer) updateStatus(height uint64) {
 	rt.syncStatus[rt.Channel] = height
 }
 
-func (rt *retracer) SyncToFile() error {
+func (rt *retracer) syncToFile() error {
 	rt.syncMu.Lock()
 	snapShot, err := json.Marshal(rt.syncStatus)
 	if len(rt.syncStatus) == 0 || len(snapShot) == 0 {
