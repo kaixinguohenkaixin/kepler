@@ -297,6 +297,11 @@ void _recordUserC2PRecord(string txid, address sender, address receiver, uint256
  */
 MUTABLE
 bool CTransfer(string _txid, address _receiver, uint256 _value) {
+    address selfAddr = GetContractAddress();
+    uint256 selfBalance = GetBalanceFromAddress(selfAddr);
+    // 转账金额不可以超过合约本身金额
+    Require(U256_Cmp(selfBalance, _value) == 1, "transfer amount should < contract balance");
+    
     processedTxIDs.key = _txid;
     // 如果交易已经处理，则返回
     if (!Equal(processedTxIDs.value, emptyAddr)) {
