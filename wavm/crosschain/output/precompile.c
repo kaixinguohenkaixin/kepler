@@ -1,7 +1,7 @@
 #include "vntlib.h"
 
-// crosschain合约代码
-// 用户从公链向联盟链转账记录
+
+
 struct UserPubToCon {
     address pubAddr;
     string conAddr;
@@ -9,7 +9,7 @@ struct UserPubToCon {
     string txid;
 };
 
-// 用户从公链向联盟链转账，联盟链失败之后，公链的回滚操作
+
 struct RollbackOfUserP2C {
     string txid;
     mapping(address, bool) agreedOrgs;
@@ -18,7 +18,7 @@ struct RollbackOfUserP2C {
     uint256 value;
 };
 
-// 用户从联盟链向公链转账记录
+
 struct UserConToPub {
     mapping(address, bool) agreedOrgs;
     uint32 agreedOrgsLength;
@@ -27,110 +27,110 @@ struct UserConToPub {
     string txid;
 };
 
-// 空地址
+
 KEY address emptyAddr = "";
-// 空字符串
+
 KEY string emptyStr = "";
-// 组织总数
+
 KEY uint32 orgsCount;
-// For Test
+
 KEY uint32 testFlag;
 
-// 组织余额
+
 KEY mapping(address, uint256) orgsBalance;
-// 记录组织的地址，一个组织可以存在多个地址
+
 KEY mapping(address, address) orgsAddr;
-// 用户从公链向联盟链转账记录，以txid为key
+
 KEY mapping(string, struct UserPubToCon) userPubToConMap;
-// 用户从公链向联盟链转账，联盟链失败之后，公链的回滚操作记录，以txid为key
+
 KEY mapping(string, struct RollbackOfUserP2C) rollbackOfUserP2CMap;
-// 已经处理的用户从联盟链向公链转账交易，以及用户公链的地址
+
 KEY mapping(string, address) processedTxIDs;
-// 用户从联盟链向公链转账记录，以txid为key
+
 KEY mapping(string, struct UserConToPub) userConToPubMap;
 
-// 用户从公链向联盟链转账事件
+
 EVENT LogUserToC(indexed string event_name, string _ac_address, indexed address _a_address, string txid, indexed uint256 value);
-// 用户从联盟链向公链转账事件
+
 EVENT LogCToUser(indexed string event_name, indexed address agreed_orgs, indexed address receiver, string txid, indexed uint256 value);
 
 /**
   * Initializes contract
   */
 
-void keycif87fqm(){
-AddKeyInfo( &rollbackOfUserP2CMap.value.agreedOrgs.value, 8, &rollbackOfUserP2CMap, 9, false);
-AddKeyInfo( &rollbackOfUserP2CMap.value.agreedOrgs.value, 8, &rollbackOfUserP2CMap.key, 6, false);
-AddKeyInfo( &rollbackOfUserP2CMap.value.agreedOrgs.value, 8, &rollbackOfUserP2CMap.value.agreedOrgs, 9, false);
-AddKeyInfo( &rollbackOfUserP2CMap.value.agreedOrgs.value, 8, &rollbackOfUserP2CMap.value.agreedOrgs.key, 7, false);
-AddKeyInfo( &processedTxIDs.value, 7, &processedTxIDs, 9, false);
-AddKeyInfo( &processedTxIDs.value, 7, &processedTxIDs.key, 6, false);
-AddKeyInfo( &userConToPubMap.value.pubAddr, 7, &userConToPubMap, 9, false);
-AddKeyInfo( &userConToPubMap.value.pubAddr, 7, &userConToPubMap.key, 6, false);
-AddKeyInfo( &userConToPubMap.value.pubAddr, 7, &userConToPubMap.value.pubAddr, 9, false);
-AddKeyInfo( &orgsCount, 3, &orgsCount, 9, false);
-AddKeyInfo( &userPubToConMap.value.txid, 6, &userPubToConMap, 9, false);
-AddKeyInfo( &userPubToConMap.value.txid, 6, &userPubToConMap.key, 6, false);
-AddKeyInfo( &userPubToConMap.value.txid, 6, &userPubToConMap.value.txid, 9, false);
+void keyxo1539qc(){
+AddKeyInfo( &userPubToConMap.value.conAddr, 6, &userPubToConMap, 9, false);
+AddKeyInfo( &userPubToConMap.value.conAddr, 6, &userPubToConMap.key, 6, false);
+AddKeyInfo( &userPubToConMap.value.conAddr, 6, &userPubToConMap.value.conAddr, 9, false);
 AddKeyInfo( &userConToPubMap.value.agreedOrgs.value, 8, &userConToPubMap, 9, false);
 AddKeyInfo( &userConToPubMap.value.agreedOrgs.value, 8, &userConToPubMap.key, 6, false);
 AddKeyInfo( &userConToPubMap.value.agreedOrgs.value, 8, &userConToPubMap.value.agreedOrgs, 9, false);
 AddKeyInfo( &userConToPubMap.value.agreedOrgs.value, 8, &userConToPubMap.value.agreedOrgs.key, 7, false);
+AddKeyInfo( &userConToPubMap.value.txid, 6, &userConToPubMap, 9, false);
+AddKeyInfo( &userConToPubMap.value.txid, 6, &userConToPubMap.key, 6, false);
+AddKeyInfo( &userConToPubMap.value.txid, 6, &userConToPubMap.value.txid, 9, false);
+AddKeyInfo( &userPubToConMap.value.value, 5, &userPubToConMap, 9, false);
+AddKeyInfo( &userPubToConMap.value.value, 5, &userPubToConMap.key, 6, false);
+AddKeyInfo( &userPubToConMap.value.value, 5, &userPubToConMap.value.value, 9, false);
+AddKeyInfo( &userConToPubMap.value.agreedOrgsLength, 3, &userConToPubMap, 9, false);
+AddKeyInfo( &userConToPubMap.value.agreedOrgsLength, 3, &userConToPubMap.key, 6, false);
+AddKeyInfo( &userConToPubMap.value.agreedOrgsLength, 3, &userConToPubMap.value.agreedOrgsLength, 9, false);
+AddKeyInfo( &userConToPubMap.value.pubAddr, 7, &userConToPubMap, 9, false);
+AddKeyInfo( &userConToPubMap.value.pubAddr, 7, &userConToPubMap.key, 6, false);
+AddKeyInfo( &userConToPubMap.value.pubAddr, 7, &userConToPubMap.value.pubAddr, 9, false);
+AddKeyInfo( &rollbackOfUserP2CMap.value.receiver, 7, &rollbackOfUserP2CMap, 9, false);
+AddKeyInfo( &rollbackOfUserP2CMap.value.receiver, 7, &rollbackOfUserP2CMap.key, 6, false);
+AddKeyInfo( &rollbackOfUserP2CMap.value.receiver, 7, &rollbackOfUserP2CMap.value.receiver, 9, false);
+AddKeyInfo( &userPubToConMap.value.txid, 6, &userPubToConMap, 9, false);
+AddKeyInfo( &userPubToConMap.value.txid, 6, &userPubToConMap.key, 6, false);
+AddKeyInfo( &userPubToConMap.value.txid, 6, &userPubToConMap.value.txid, 9, false);
+AddKeyInfo( &userPubToConMap.value.pubAddr, 7, &userPubToConMap, 9, false);
+AddKeyInfo( &userPubToConMap.value.pubAddr, 7, &userPubToConMap.key, 6, false);
+AddKeyInfo( &userPubToConMap.value.pubAddr, 7, &userPubToConMap.value.pubAddr, 9, false);
+AddKeyInfo( &rollbackOfUserP2CMap.value.agreedOrgs.value, 8, &rollbackOfUserP2CMap, 9, false);
+AddKeyInfo( &rollbackOfUserP2CMap.value.agreedOrgs.value, 8, &rollbackOfUserP2CMap.key, 6, false);
+AddKeyInfo( &rollbackOfUserP2CMap.value.agreedOrgs.value, 8, &rollbackOfUserP2CMap.value.agreedOrgs, 9, false);
+AddKeyInfo( &rollbackOfUserP2CMap.value.agreedOrgs.value, 8, &rollbackOfUserP2CMap.value.agreedOrgs.key, 7, false);
 AddKeyInfo( &rollbackOfUserP2CMap.value.value, 5, &rollbackOfUserP2CMap, 9, false);
 AddKeyInfo( &rollbackOfUserP2CMap.value.value, 5, &rollbackOfUserP2CMap.key, 6, false);
 AddKeyInfo( &rollbackOfUserP2CMap.value.value, 5, &rollbackOfUserP2CMap.value.value, 9, false);
-AddKeyInfo( &userPubToConMap.value.conAddr, 6, &userPubToConMap, 9, false);
-AddKeyInfo( &userPubToConMap.value.conAddr, 6, &userPubToConMap.key, 6, false);
-AddKeyInfo( &userPubToConMap.value.conAddr, 6, &userPubToConMap.value.conAddr, 9, false);
-AddKeyInfo( &testFlag, 3, &testFlag, 9, false);
+AddKeyInfo( &rollbackOfUserP2CMap.value.agreedOrgsLength, 3, &rollbackOfUserP2CMap, 9, false);
+AddKeyInfo( &rollbackOfUserP2CMap.value.agreedOrgsLength, 3, &rollbackOfUserP2CMap.key, 6, false);
+AddKeyInfo( &rollbackOfUserP2CMap.value.agreedOrgsLength, 3, &rollbackOfUserP2CMap.value.agreedOrgsLength, 9, false);
 AddKeyInfo( &rollbackOfUserP2CMap.value.txid, 6, &rollbackOfUserP2CMap, 9, false);
 AddKeyInfo( &rollbackOfUserP2CMap.value.txid, 6, &rollbackOfUserP2CMap.key, 6, false);
 AddKeyInfo( &rollbackOfUserP2CMap.value.txid, 6, &rollbackOfUserP2CMap.value.txid, 9, false);
 AddKeyInfo( &orgsBalance.value, 5, &orgsBalance, 9, false);
 AddKeyInfo( &orgsBalance.value, 5, &orgsBalance.key, 7, false);
-AddKeyInfo( &userConToPubMap.value.agreedOrgsLength, 3, &userConToPubMap, 9, false);
-AddKeyInfo( &userConToPubMap.value.agreedOrgsLength, 3, &userConToPubMap.key, 6, false);
-AddKeyInfo( &userConToPubMap.value.agreedOrgsLength, 3, &userConToPubMap.value.agreedOrgsLength, 9, false);
-AddKeyInfo( &userPubToConMap.value.pubAddr, 7, &userPubToConMap, 9, false);
-AddKeyInfo( &userPubToConMap.value.pubAddr, 7, &userPubToConMap.key, 6, false);
-AddKeyInfo( &userPubToConMap.value.pubAddr, 7, &userPubToConMap.value.pubAddr, 9, false);
+AddKeyInfo( &emptyAddr, 7, &emptyAddr, 9, false);
+AddKeyInfo( &orgsCount, 3, &orgsCount, 9, false);
+AddKeyInfo( &processedTxIDs.value, 7, &processedTxIDs, 9, false);
+AddKeyInfo( &processedTxIDs.value, 7, &processedTxIDs.key, 6, false);
 AddKeyInfo( &userConToPubMap.value.value, 5, &userConToPubMap, 9, false);
 AddKeyInfo( &userConToPubMap.value.value, 5, &userConToPubMap.key, 6, false);
 AddKeyInfo( &userConToPubMap.value.value, 5, &userConToPubMap.value.value, 9, false);
-AddKeyInfo( &emptyStr, 6, &emptyStr, 9, false);
-AddKeyInfo( &emptyAddr, 7, &emptyAddr, 9, false);
-AddKeyInfo( &rollbackOfUserP2CMap.value.receiver, 7, &rollbackOfUserP2CMap, 9, false);
-AddKeyInfo( &rollbackOfUserP2CMap.value.receiver, 7, &rollbackOfUserP2CMap.key, 6, false);
-AddKeyInfo( &rollbackOfUserP2CMap.value.receiver, 7, &rollbackOfUserP2CMap.value.receiver, 9, false);
-AddKeyInfo( &userPubToConMap.value.value, 5, &userPubToConMap, 9, false);
-AddKeyInfo( &userPubToConMap.value.value, 5, &userPubToConMap.key, 6, false);
-AddKeyInfo( &userPubToConMap.value.value, 5, &userPubToConMap.value.value, 9, false);
-AddKeyInfo( &userConToPubMap.value.txid, 6, &userConToPubMap, 9, false);
-AddKeyInfo( &userConToPubMap.value.txid, 6, &userConToPubMap.key, 6, false);
-AddKeyInfo( &userConToPubMap.value.txid, 6, &userConToPubMap.value.txid, 9, false);
+AddKeyInfo( &testFlag, 3, &testFlag, 9, false);
 AddKeyInfo( &orgsAddr.value, 7, &orgsAddr, 9, false);
 AddKeyInfo( &orgsAddr.value, 7, &orgsAddr.key, 7, false);
-AddKeyInfo( &rollbackOfUserP2CMap.value.agreedOrgsLength, 3, &rollbackOfUserP2CMap, 9, false);
-AddKeyInfo( &rollbackOfUserP2CMap.value.agreedOrgsLength, 3, &rollbackOfUserP2CMap.key, 6, false);
-AddKeyInfo( &rollbackOfUserP2CMap.value.agreedOrgsLength, 3, &rollbackOfUserP2CMap.value.agreedOrgsLength, 9, false);
+AddKeyInfo( &emptyStr, 6, &emptyStr, 9, false);
 }
 constructor C() {
-keycif87fqm();
+keyxo1539qc();
 InitializeVariables();}
 
 UNMUTABLE
 uint32 GetOrgs() {
-keycif87fqm();
+keyxo1539qc();
     return orgsCount;
 }
 
 UNMUTABLE
 uint32 GetFlag() {
-keycif87fqm(); return testFlag; }
+keyxo1539qc(); return testFlag; }
 
 UNMUTABLE
 uint256 GetOrgsBalance(address addr) {
-keycif87fqm();
+keyxo1539qc();
     orgsBalance.key = addr;
     return orgsBalance.value;
 }
@@ -170,15 +170,15 @@ bool _orgIsExist(address addr) {
  */
 MUTABLE
 bool AddOrg(address added_org) {
-keycif87fqm();
+keyxo1539qc();
     address sender = GetSender();
     if (orgsCount == 0) {
         _addOrg(sender, sender);
     } else {
-        // 必须由添加过的sender添加其他组织地址
+        
         Require(_orgIsExist(sender), "sender should be added to organization list");
         
-        // 不重复添加
+        
         if (!_orgIsExist(added_org)) {
             _addOrg(added_org, sender);
         }
@@ -191,17 +191,17 @@ keycif87fqm();
  */
 MUTABLE
 bool $Charge() {
-keycif87fqm();
+keyxo1539qc();
     address sender = GetSender();
     uint256 value = GetValue();
-    // 不可以充值0
+    
     Require(U256_Cmp(value, U256(0)) == 1, "charge amount should > 0");
     
-    // 需要先调用AddOrg添加该sender
+    
     Require(_orgIsExist(sender), "sender shoud be added to the organization list");
     
     orgsBalance.key = sender;
-    // 组织地址中存有钱后无法再充值
+    
     Require(U256_Cmp(orgsBalance.value, U256(0)) == 0, "organization shoud only charge once");
     
     orgsBalance.value = value;
@@ -216,14 +216,14 @@ keycif87fqm();
  */
 MUTABLE
 bool $TransferToC(string _ac_address, string _txid) {
-keycif87fqm();
+keyxo1539qc();
     userPubToConMap.key = _txid;
-    // 此交易必须没有处理过
+    
     Require(Equal(userPubToConMap.value.txid, emptyStr), "transaction cannot be processed twice");
     
     address sender = GetSender();
     uint256 value = GetValue();
-    // 不可以转账0
+    
     Require(U256_Cmp(value, U256(0)) == 1, "transfer amount should > 0");
    
     userPubToConMap.value.pubAddr = sender;
@@ -285,11 +285,11 @@ void _delUserP2CRecord(string txid) {
  */
 MUTABLE
 uint32 CRollback(string _txid) {
-keycif87fqm();
+keyxo1539qc();
     uint32 isRollback = 1;
     
     userPubToConMap.key = _txid;
-    // 此交易并未处理过
+    
     if (Equal(userPubToConMap.value.txid, emptyStr)) {
         isRollback = 3;
         PrintStr("CRollback no recorded txid: ", _txid);
@@ -298,7 +298,7 @@ keycif87fqm();
     
     address sender = GetSender();
     rollbackOfUserP2CMap.key = _txid;
-    // 此交易执行过，且没有回滚过
+    
     if (Equal(rollbackOfUserP2CMap.value.txid, emptyStr)) {
         _recordRollbackP2C(_txid, sender, true);
         isRollback = 4;
@@ -306,7 +306,7 @@ keycif87fqm();
         return isRollback;
     } else {
         rollbackOfUserP2CMap.key = _txid;
-        // 寻找rollbackInfo中是否记录了本组织（sender），如果没有，加入本组织
+        
         bool isFind = false;
         for (uint32 i = 0; i < rollbackOfUserP2CMap.value.agreedOrgsLength; i++) {
             rollbackOfUserP2CMap.value.agreedOrgs.key = sender;
@@ -319,7 +319,7 @@ keycif87fqm();
             PrintAddress("CRollback record rollback from address: ", sender);
         }
         
-        // 如果所有组织均同意，则回退
+        
         if (rollbackOfUserP2CMap.value.agreedOrgsLength >= orgsCount) {
             _delUserP2CRecord(_txid);
             SendFromContract(rollbackOfUserP2CMap.value.receiver, rollbackOfUserP2CMap.value.value);
@@ -363,9 +363,14 @@ void _recordUserC2PRecord(string txid, address sender, address receiver, uint256
  */
 MUTABLE
 bool CTransfer(string _txid, address _receiver, uint256 _value) {
-keycif87fqm();
+keyxo1539qc();
+    address selfAddr = GetContractAddress();
+    uint256 selfBalance = GetBalanceFromAddress(selfAddr);
+    
+    Require(U256_Cmp(selfBalance, _value) == 1, "transfer amount should < contract balance");
+    
     processedTxIDs.key = _txid;
-    // 如果交易已经处理，则返回
+    
     if (!Equal(processedTxIDs.value, emptyAddr)) {
         PrintStr("CTransfer processed: ", _txid);
         return true;
@@ -373,25 +378,25 @@ keycif87fqm();
     
     address sender = GetSender();
     userConToPubMap.key = _txid;
-    // 如果交易并没有记录，则记录交易
+    
     if (Equal(userConToPubMap.value.txid, emptyStr)) {
         _recordUserC2PRecord(_txid, sender, _receiver, _value, true);
         PrintStr("CTransfer record first: ", _txid);
     } else {
-        // 交易已经记录，接收方必须一致
+        
         if (!Equal(userConToPubMap.value.pubAddr, _receiver)) {
             PrintAddress("CTransfer notEqual Addr1: ", userConToPubMap.value.pubAddr);
             PrintAddress("CTransfer notEqual Addr2: ", _receiver);
             return false;
         }
         
-        // 交易已经记录，金额必须一致
+        
         if (U256_Cmp(userConToPubMap.value.value, _value) != 0) {
             PrintUint256T("CTransfer value not the same: ", _value);
             return false;
         }
         
-        // 寻找userConToPubMap中是否记录了本组织（sender），如果没有，加入本组织
+        
         bool isFind = false;
         for (uint32 i = 0; i < userConToPubMap.value.agreedOrgsLength; i++) {
             userConToPubMap.value.agreedOrgs.key = sender;
@@ -404,7 +409,7 @@ keycif87fqm();
             PrintAddress("CTransfer record: ", _receiver);
         }
         
-        // 如果所有组织均同意，则执行
+        
         if (userConToPubMap.value.agreedOrgsLength >= orgsCount) {
             SendFromContract(_receiver, _value);
             PrintAddress("CTransfer receiver: ", _receiver);

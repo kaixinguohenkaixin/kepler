@@ -11,13 +11,13 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
-	"github.com/spf13/viper"
 	"golang.org/x/crypto/sha3"
 	"hash"
 	"io/ioutil"
 	"math/big"
 
-	proto "github.com/golang/protobuf/proto"
+	"github.com/golang/protobuf/proto"
+	"github.com/vntchain/kepler/conf"
 )
 
 var (
@@ -100,8 +100,8 @@ func ToLowS(k *ecdsa.PublicKey, s *big.Int) (*big.Int, bool, error) {
 }
 
 func GetHash() hash.Hash {
-	hashFunctionName := viper.GetString("consortium.crypto.hash")
-	security := viper.GetInt("consortium.crypto.security")
+	hashFunctionName := conf.TheConsortiumConf.Crypto.Hash
+	security := conf.TheConsortiumConf.Crypto.Security
 	if hashFunctionName == "sha256" || hashFunctionName == "sha2" {
 		return sha256.New()
 	} else if hashFunctionName == "sha512" {
@@ -274,7 +274,7 @@ func SerializeCert(certPEM []byte) ([]byte, error) {
 	}
 
 	// We serialize identities by prepending the MSPID and appending the ASN.1 DER content of the cert
-	sId := &SerializedIdentity{Mspid: viper.GetString("consortium.mspId"), IdBytes: pemBytes}
+	sId := &SerializedIdentity{Mspid: conf.TheConsortiumConf.MspId, IdBytes: pemBytes}
 	idBytes, err := proto.Marshal(sId)
 	if err != nil {
 		return nil, err
